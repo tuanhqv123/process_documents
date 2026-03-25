@@ -1,8 +1,8 @@
 """
 PDF processing pipeline — page-by-page streaming.
 
-- PyMuPDF: image extraction (fast)
-- PP-StructureV3: layout + OCR + table recognition per page
+- PyMuPDF: text and image extraction (fast)
+- RapidOCR: OCR for image/scanned pages (fast with ONNX Runtime)
 - Yields one page at a time so caller can save incrementally
 """
 
@@ -50,21 +50,11 @@ class PDFPipeline:
         self._structure = None
 
     @property
-    def structure_pipeline(self):
-        """Lazy-init PP-StructureV3 (heavy, only load once)."""
+    def ocr_engine(self):
+        """Lazy-init RapidOCR with ONNX Runtime (fast for Mac M2)."""
         if self._structure is None:
-            os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-            from paddleocr import PPStructureV3
-            self._structure = PPStructureV3(
-                text_detection_model_name="PP-OCRv5_mobile_det",
-                text_recognition_model_name="PP-OCRv5_mobile_rec",
-                layout_detection_model_name="PP-DocLayout-S",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_seal_recognition=False,
-                use_formula_recognition=self.config.use_formula_recognition,
-                use_chart_recognition=self.config.use_chart_recognition,
-            )
+            from rapidocr_onnxruntime import RapidOCR
+            self._structure = RapidOCR()
         return self._structure
 
     def page_count(self) -> int:
@@ -89,7 +79,7 @@ class PDFPipeline:
             page = doc[page_num]
             images = self._extract_images(page, page_num, doc)
 
-            # --- Get structured markdown with PP-StructureV3 ---
+            # --- Extract text with hybrid approach ---
             markdown = self._process_page_structure(page_num)
 
             elapsed = round(time.time() - t0, 2)
@@ -106,19 +96,40 @@ class PDFPipeline:
         doc.close()
 
     def _process_page_structure(self, page_num: int) -> str:
-        """Run PP-StructureV3 on a single page."""
+        """
+        Extract text from page using hybrid approach:
+        1. Try PyMuPDF text extraction (instant)
+        2. If insufficient, use RapidOCR (fast)
+        """
+        doc = pymupdf.open(self.file_path)
+        page = doc[page_num]
+
         try:
-            # page_range is 1-indexed
-            output = list(self.structure_pipeline.predict(
-                self.file_path,
-                page_range=[page_num + 1, page_num + 1],
-            ))
-            if output:
-                md = output[0].markdown
-                text = md.get("markdown_texts", "") if isinstance(md, dict) else str(md)
-                return self._clean_text(text)
+            # Try PyMuPDF text extraction first (fast)
+            text = page.get_text("text")
+            text = self._clean_text(text)
+
+            # Check if we have sufficient text
+            # Less than 50 chars or mostly whitespace/numbers likely needs OCR
+            if len(text) > 50 and any(c.isalpha() for c in text):
+                return text
+
+            # If text is insufficient, use RapidOCR for OCR
+            print(f"  [Page {page_num + 1}] Using OCR (text too short)")
+            page_pix = page.get_pixmap()
+            import io
+            img_bytes = page_pix.tobytes("png")
+            result, _ = self.ocr_engine(img_bytes)
+
+            if result:
+                ocr_text = "\n".join([line[1] for line in result if line[1].strip()])
+                return self._clean_text(ocr_text)
+
         except Exception as e:
-            print(f"  [Page {page_num + 1}] PP-StructureV3 error: {e}")
+            print(f"  [Page {page_num + 1}] OCR error: {e}")
+        finally:
+            doc.close()
+
         return ""
 
     def _clean_text(self, text: str) -> str:

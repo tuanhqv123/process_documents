@@ -11,7 +11,6 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 from api import db as database
 
