@@ -1,8 +1,8 @@
 """
 PDF processing pipeline — page-by-page streaming.
 
-- PyMuPDF: text and image extraction (fast)
-- RapidOCR: OCR for image/scanned pages (fast with ONNX Runtime)
+- PyMuPDF: image extraction (fast)
+- RapidOCR: OCR for all pages (fast with ONNX Runtime)
 - Yields one page at a time so caller can save incrementally
 """
 
@@ -79,7 +79,7 @@ class PDFPipeline:
             page = doc[page_num]
             images = self._extract_images(page, page_num, doc)
 
-            # --- Extract text with hybrid approach ---
+            # --- Extract text with RapidOCR ---
             markdown = self._process_page_structure(page_num)
 
             elapsed = round(time.time() - t0, 2)
@@ -97,27 +97,14 @@ class PDFPipeline:
 
     def _process_page_structure(self, page_num: int) -> str:
         """
-        Extract text from page using hybrid approach:
-        1. Try PyMuPDF text extraction (instant)
-        2. If insufficient, use RapidOCR (fast)
+        Extract text from page using RapidOCR.
         """
         doc = pymupdf.open(self.file_path)
         page = doc[page_num]
 
         try:
-            # Try PyMuPDF text extraction first (fast)
-            text = page.get_text("text")
-            text = self._clean_text(text)
-
-            # Check if we have sufficient text
-            # Less than 50 chars or mostly whitespace/numbers likely needs OCR
-            if len(text) > 50 and any(c.isalpha() for c in text):
-                return text
-
-            # If text is insufficient, use RapidOCR for OCR
-            print(f"  [Page {page_num + 1}] Using OCR (text too short)")
+            # Use RapidOCR for OCR
             page_pix = page.get_pixmap()
-            import io
             img_bytes = page_pix.tobytes("png")
             result, _ = self.ocr_engine(img_bytes)
 
