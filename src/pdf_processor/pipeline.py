@@ -1,7 +1,8 @@
 """
 PDF processing pipeline — page-by-page streaming.
 
-- PyMuPDF: text and image extraction (fast)
+- PyMuPDF: image extraction (fast)
+- RapidDoc: Complete document processing (OCR, layout, tables, formulas)
 - Yields one page at a time so caller can save incrementally
 """
 
@@ -44,6 +45,7 @@ class PDFPipeline:
     def __init__(self, file_path: str, config: PipelineConfig | None = None):
         self.file_path = str(file_path)
         self.config = config or PipelineConfig()
+        self._rapid_doc_result = None
 
     def page_count(self) -> int:
         doc = pymupdf.open(self.file_path)
@@ -65,12 +67,11 @@ class PDFPipeline:
 
             page = doc[page_num]
 
-            # --- Extract text with PyMuPDF (instant) ---
-            text = page.get_text("text")
-            markdown = self._clean_text(text)
-
             # --- Extract images with PyMuPDF (fast) ---
             images = self._extract_images(page, page_num, doc)
+
+            # --- Extract text with RapidDoc ---
+            markdown = self._process_page_with_rapiddoc(page_num)
 
             elapsed = round(time.time() - t0, 2)
             print(f"  [Page {page_num + 1}/{total}] {len(markdown)} chars, "
@@ -84,6 +85,53 @@ class PDFPipeline:
             )
 
         doc.close()
+
+    def _process_page_with_rapiddoc(self, page_num: int) -> str:
+        """
+        Extract text from page using RapidDoc (complete document processing).
+        Processes the entire document and returns the specific page's markdown.
+        """
+        try:
+            # Lazy load RapidDoc result (process once for all pages)
+            if self._rapid_doc_result is None:
+                print("  [RapidDoc] Processing entire document (this takes a moment)...")
+                t0 = time.time()
+
+                # Read PDF as bytes
+                with open(self.file_path, 'rb') as f:
+                    pdf_bytes = f.read()
+
+                # Import and run RapidDoc
+                from rapid_doc.backend.pipeline.pipeline_analyze import doc_analyze
+
+                # Process document with RapidDoc
+                self._rapid_doc_result = doc_analyze(
+                    pdf_bytes_list=[pdf_bytes],
+                    parse_method='auto',
+                    formula_enable=False,  # Disable for speed
+                    table_enable=True,      # Enable tables
+                )
+
+                elapsed = time.time() - t0
+                print(f"  [RapidDoc] Document processed in {elapsed:.2f}s")
+
+            # Extract markdown for this specific page
+            # RapidDoc returns a tuple: (infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list)
+            infer_results = self._rapid_doc_result[0]
+
+            if infer_results and len(infer_results) > page_num:
+                page_result = infer_results[page_num]
+                if hasattr(page_result, 'markdown'):
+                    return page_result.markdown
+                elif hasattr(page_result, 'text'):
+                    return page_result.text
+
+        except Exception as e:
+            print(f"  [Page {page_num + 1}] RapidDoc error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return ""
 
     def _clean_text(self, text: str) -> str:
         text = _ZWS.sub('', text)
