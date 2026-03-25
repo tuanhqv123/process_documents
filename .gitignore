@@ -1,0 +1,39 @@
+.venv_paddle/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+node_modules/
+dist/
+build/
+*.egg-info/
+.DS_Store
+
+# Output and data directories
+output/
+data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Test files
+test_*.py
+
+# Local settings and environment
+.env
+.env.local
+settings.local.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

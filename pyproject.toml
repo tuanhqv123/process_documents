@@ -1,0 +1,15 @@
+[project]
+name = "pdf-processor"
+version = "0.1.0"
+description = "Lightweight PDF processing pipeline for educational documents"
+requires-python = ">=3.10"
+
+dependencies = [
+    "pymupdf>=1.24",
+    "numpy>=1.24",
+    "paddleocr>=3.0",
+    "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
