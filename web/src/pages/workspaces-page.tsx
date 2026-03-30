@@ -37,7 +37,7 @@ export function WorkspacesPage({
   useEffect(() => {
     if (!selectedWs) return
     api.workspaces.documents(selectedWs.id).then(setWsDocs)
-  }, [selectedWs?.id])
+  }, [selectedWs?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreateWorkspace = async () => {
     if (!newName.trim()) return

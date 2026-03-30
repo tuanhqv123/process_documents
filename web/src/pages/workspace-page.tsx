@@ -27,11 +27,9 @@ export function WorkspacePage({
 }: WorkspacePageProps) {
   const [wsDocs, setWsDocs] = useState<Document[]>([])
   const [showAddDoc, setShowAddDoc] = useState(false)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
-    api.workspaces.documents(workspace.id).then(setWsDocs).finally(() => setLoading(false))
+    api.workspaces.documents(workspace.id).then(setWsDocs)
   }, [workspace.id])
 
   const handleAddDoc = async (doc: Document) => {
@@ -83,9 +81,7 @@ export function WorkspacePage({
       </div>
 
       {/* Document grid */}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : wsDocs.length === 0 ? (
+      {wsDocs.length === 0 && allDocuments.length > 0 ? (
         <div className="flex flex-col items-center justify-center h-40 gap-2 text-muted-foreground">
           <FileText className="h-8 w-8" />
           <p className="text-sm">No documents in this workspace</p>

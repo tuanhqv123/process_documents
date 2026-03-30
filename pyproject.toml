@@ -5,11 +5,39 @@ description = "Lightweight PDF processing pipeline for educational documents"
 requires-python = ">=3.10"
 
 dependencies = [
-    "pymupdf>=1.24",
     "numpy>=1.24",
     "rapid-doc>=0.7.0",
     "opencv-python-headless>=4.8",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    "onnxruntime",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
+    "pydantic-settings>=2.0",
+    "pytesseract>=0.3",
+    "Pillow>=10.0",
+    "pgvector>=0.3.0",
+    "httpx>=0.27",
+    "redis>=5.0",
+    "websockets>=12.0",
+    "soundfile>=0.12",
+    "librosa>=0.10",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["api"]
+
+[tool.setuptools.package-dir]
+api = "api"
+
+[tool.setuptools.package-data]
+api = ["*.py"]

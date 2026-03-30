@@ -11,10 +11,10 @@ import sys
 import argparse
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add api to path
+sys.path.insert(0, str(Path(__file__).parent / "api"))
 
-from pdf_processor.pipeline import PDFPipeline, PipelineConfig
+from pipeline import PDFPipeline, PipelineConfig
 
 
 def main():

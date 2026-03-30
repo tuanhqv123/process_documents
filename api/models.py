@@ -25,6 +25,7 @@ class DocumentOut(BaseModel):
     page_count: int
     image_count: int
     chunk_count: int
+    formula_count: int = 0
     status: str
     error: Optional[str]
     created_at: str
@@ -59,6 +60,16 @@ class ImageOut(BaseModel):
 
 class ImageUpdate(BaseModel):
     ocr_text: str
+
+
+class FormulaOut(BaseModel):
+    id: int
+    doc_id: int
+    page_num: int
+    latex: str
+    formula_type: str
+    bbox: list[float]
+    is_edited: bool
 
 
 class AddDocToWorkspace(BaseModel):

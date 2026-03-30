@@ -37,3 +37,10 @@ settings.local.json
 *.swp
 *.swo
 *~
+
+node_modules/
+.venv/
+venv/
+
+# OpenCode
+.opencode/

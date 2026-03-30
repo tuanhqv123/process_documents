@@ -1,72 +1,108 @@
 """Workspace routes: CRUD + document membership."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
 
-from api import db as database
+from api.db import get_session, Workspace, WorkspaceDoc, Document
 from api.models import WorkspaceCreate, WorkspaceOut, DocumentOut, AddDocToWorkspace
-from api.routes.documents import _doc_row
+from api.routes.documents import _doc_model
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
 
+def _get_db():
+    db = get_session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 @router.get("", response_model=list[WorkspaceOut])
-def list_workspaces():
-    rows = database.list_workspaces()
+def list_workspaces(db: Session = Depends(_get_db)):
+    workspaces = db.query(Workspace).order_by(Workspace.created_at.desc()).all()
     result = []
-    for r in rows:
-        docs = database.get_workspace_documents(r["id"])
+    for ws in workspaces:
+        doc_count = db.query(WorkspaceDoc).filter(WorkspaceDoc.workspace_id == ws.id).count()
         result.append(WorkspaceOut(
-            id=r["id"],
-            name=r["name"],
-            description=r["description"] or "",
-            created_at=r["created_at"],
-            doc_count=len(docs),
+            id=ws.id,
+            name=ws.name,
+            description=ws.description or "",
+            created_at=ws.created_at.isoformat() if ws.created_at else "",
+            doc_count=doc_count,
         ))
     return result
 
 
 @router.post("", response_model=WorkspaceOut)
-def create_workspace(body: WorkspaceCreate):
-    ws_id = database.insert_workspace(body.name, body.description)
-    row = database.get_workspace(ws_id)
+def create_workspace(body: WorkspaceCreate, db: Session = Depends(_get_db)):
+    ws = Workspace(
+        name=body.name,
+        description=body.description,
+    )
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
     return WorkspaceOut(
-        id=row["id"],
-        name=row["name"],
-        description=row["description"] or "",
-        created_at=row["created_at"],
+        id=ws.id,
+        name=ws.name,
+        description=ws.description or "",
+        created_at=ws.created_at.isoformat() if ws.created_at else "",
         doc_count=0,
     )
 
 
 @router.delete("/{ws_id}")
-def delete_workspace(ws_id: int):
-    if not database.get_workspace(ws_id):
+def delete_workspace(ws_id: int, db: Session = Depends(_get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws:
         raise HTTPException(404, "Workspace not found")
-    database.delete_workspace(ws_id)
+    db.delete(ws)
+    db.commit()
     return {"ok": True}
 
 
 @router.get("/{ws_id}/documents", response_model=list[DocumentOut])
-def get_workspace_documents(ws_id: int):
-    if not database.get_workspace(ws_id):
+def get_workspace_documents(ws_id: int, db: Session = Depends(_get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws:
         raise HTTPException(404, "Workspace not found")
-    rows = database.get_workspace_documents(ws_id)
-    return [_doc_row(r) for r in rows]
+    ws_docs = db.query(WorkspaceDoc).filter(WorkspaceDoc.workspace_id == ws_id).all()
+    doc_ids = [wd.doc_id for wd in ws_docs]
+    docs = db.query(Document).filter(Document.id.in_(doc_ids)).order_by(Document.created_at.desc()).all()
+    return [_doc_model(d) for d in docs]
 
 
 @router.post("/{ws_id}/documents")
-def add_document(ws_id: int, body: AddDocToWorkspace):
-    if not database.get_workspace(ws_id):
+def add_document(ws_id: int, body: AddDocToWorkspace, db: Session = Depends(_get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws:
         raise HTTPException(404, "Workspace not found")
-    if not database.get_document(body.doc_id):
+    doc = db.query(Document).filter(Document.id == body.doc_id).first()
+    if not doc:
         raise HTTPException(404, "Document not found")
-    database.add_doc_to_workspace(ws_id, body.doc_id)
+    
+    existing = db.query(WorkspaceDoc).filter(
+        WorkspaceDoc.workspace_id == ws_id,
+        WorkspaceDoc.doc_id == body.doc_id
+    ).first()
+    if not existing:
+        wd = WorkspaceDoc(workspace_id=ws_id, doc_id=body.doc_id)
+        db.add(wd)
+        db.commit()
     return {"ok": True}
 
 
 @router.delete("/{ws_id}/documents/{doc_id}")
-def remove_document(ws_id: int, doc_id: int):
-    if not database.get_workspace(ws_id):
+def remove_document(ws_id: int, doc_id: int, db: Session = Depends(_get_db)):
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws:
         raise HTTPException(404, "Workspace not found")
-    database.remove_doc_from_workspace(ws_id, doc_id)
+    wd = db.query(WorkspaceDoc).filter(
+        WorkspaceDoc.workspace_id == ws_id,
+        WorkspaceDoc.doc_id == doc_id
+    ).first()
+    if wd:
+        db.delete(wd)
+        db.commit()
     return {"ok": True}

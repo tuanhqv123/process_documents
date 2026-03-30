@@ -60,7 +60,7 @@ export function ThemeProvider({
   )
 }
 
-export const useTheme = () => {
+export const useTheme = () => { // eslint-disable-line react-refresh/only-export-components
   const context = useContext(ThemeProviderContext)
   if (context === undefined)
     throw new Error("useTheme must be used within a ThemeProvider")

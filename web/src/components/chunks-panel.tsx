@@ -1,10 +1,83 @@
 import { useState } from "react"
+import ReactMarkdown from "react-markdown"
+import rehypeRaw from "rehype-raw"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
+import katex from "katex"
+import type { Components } from "react-markdown"
+import type { ReactNode } from "react"
+import "katex/dist/katex.min.css"
 import { Pencil, Check, X, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table"
 import { api } from "@/api/client"
 import type { Chunk } from "@/types"
+
+function containsHtmlTable(text: string): boolean {
+  return /<table[\s>]/i.test(text)
+}
+
+function containsLatex(text: string): boolean {
+  return /\$[^$]+\$|\$\$[^$]+\$\$|\\\[.*?\\\]|\\\(.*?\\\)/.test(text)
+}
+
+const LATEX_INLINE = /(\$[^$]+\$)/g
+
+function renderLatexText(text: string): ReactNode[] {
+  const parts = text.split(LATEX_INLINE)
+  return parts.map((part, i) => {
+    if (part.startsWith("$") && part.endsWith("$") && part.length > 2) {
+      const latex = part.slice(1, -1)
+      try {
+        const html = katex.renderToString(latex, { throwOnError: false })
+        return <span key={i} dangerouslySetInnerHTML={{ __html: html }} />
+      } catch {
+        return <span key={i}>{part}</span>
+      }
+    }
+    return <span key={i}>{part}</span>
+  })
+}
+
+function renderChildrenWithLatex(children: ReactNode): ReactNode {
+  if (typeof children === "string") {
+    if (LATEX_INLINE.test(children)) {
+      return renderLatexText(children)
+    }
+    return children
+  }
+  return children
+}
+
+const markdownComponents: Components = {
+  table({ children, ...props }) {
+    return <Table {...props}>{children}</Table>
+  },
+  thead({ children, ...props }) {
+    return <TableHeader {...props}>{children}</TableHeader>
+  },
+  tbody({ children, ...props }) {
+    return <TableBody {...props}>{children}</TableBody>
+  },
+  tr({ children, ...props }) {
+    return <TableRow {...props}>{children}</TableRow>
+  },
+  th({ children, ...props }) {
+    return <TableHead className="bg-muted font-semibold" {...props}>{renderChildrenWithLatex(children)}</TableHead>
+  },
+  td({ children, ...props }) {
+    return <TableCell {...props}>{renderChildrenWithLatex(children)}</TableCell>
+  },
+}
 
 interface ChunksPanelProps {
   chunks: Chunk[]
@@ -104,6 +177,16 @@ export function ChunksPanel({ chunks, onChunkUpdated }: ChunksPanelProps) {
                     {saving ? "Saving…" : "Save"}
                   </Button>
                 </div>
+              </div>
+            ) : containsHtmlTable(chunk.text) || containsLatex(chunk.text) ? (
+              <div className="text-sm leading-relaxed">
+                <ReactMarkdown
+                  rehypePlugins={[rehypeRaw, rehypeKatex]}
+                  remarkPlugins={[remarkMath]}
+                  components={markdownComponents}
+                >
+                  {chunk.text}
+                </ReactMarkdown>
               </div>
             ) : (
               <p className="text-sm leading-relaxed whitespace-pre-wrap">

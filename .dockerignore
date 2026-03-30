@@ -1,0 +1,12 @@
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+.git/
+.opencode/
+.env
+data/
+output/
+*.egg-info/
+.DS_Store

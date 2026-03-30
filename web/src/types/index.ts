@@ -6,6 +6,7 @@ export interface Document {
   page_count: number
   image_count: number
   chunk_count: number
+  formula_count: number
   status: "pending" | "processing" | "ready" | "error"
   error: string | null
   created_at: string
@@ -31,6 +32,16 @@ export interface DocImage {
   image_type: string
   ocr_text: string
   nearby_text: string
+  is_edited: boolean
+}
+
+export interface Formula {
+  id: number
+  doc_id: number
+  page_num: number
+  latex: string
+  formula_type: string
+  bbox: number[]
   is_edited: boolean
 }
 

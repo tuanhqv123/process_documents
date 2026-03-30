@@ -1,6 +1,6 @@
-import type { Chunk, DocImage, Document, Workspace } from "@/types"
+import type { Chunk, DocImage, Document, Workspace, Formula } from "@/types"
 
-const BASE = "http://localhost:8000"
+const BASE = import.meta.env.VITE_API_URL || ""
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -30,6 +30,8 @@ export const api = {
     delete: (id: number) => request<{ ok: boolean }>(`/api/documents/${id}`, { method: "DELETE" }),
     chunks: (id: number) => request<Chunk[]>(`/api/documents/${id}/chunks`),
     images: (id: number) => request<DocImage[]>(`/api/documents/${id}/images`),
+    formulas: (id: number) => request<Formula[]>(`/api/documents/${id}/formulas`),
+    content: (id: number) => request<{ document: Document; chunks: Chunk[]; images: DocImage[]; formulas: Formula[] }>(`/api/documents/${id}/content`),
     workspaces: (id: number) => request<{ id: number; name: string }[]>(`/api/documents/${id}/workspaces`),
   },
 
@@ -71,11 +73,39 @@ export const api = {
   },
 
   imageUrl: (imagePath: string) => {
-    // Convert absolute path to static URL
-    // e.g. "data/images/doc_1/page5_img0.jpeg" → "/static/images/doc_1/page5_img0.jpeg"
     const match = imagePath.match(/data\/images\/(.+)/)
     if (match) return `${BASE}/static/images/${match[1]}`
     const filename = imagePath.split("/").pop()
     return `${BASE}/static/images/${filename}`
+  },
+
+  realtime: {
+    getAudio: (deviceId: string, limit = 100) =>
+      request<{ time: string; device_id: string; amplitude: number; peak: number }[]>(
+        `/api/realtime/audio/${deviceId}?limit=${limit}`
+      ),
+    getTranscripts: (limit = 50) =>
+      request<{ time: string; device_id: string; text: string }[]>(
+        `/api/realtime/transcripts?limit=${limit}`
+      ),
+    postAudio: (deviceId: string, amplitude: number, peak = 0) =>
+      request<{ status: string }>("/api/realtime/audio", {
+        method: "POST",
+        body: JSON.stringify({ device_id: deviceId, amplitude, peak }),
+      }),
+    postTranscript: (deviceId: string, text: string) =>
+      request<{ status: string }>("/api/realtime/transcript", {
+        method: "POST",
+        body: JSON.stringify({ device_id: deviceId, text }),
+      }),
+    transcribeAudio: async (deviceId: string, file: File) => {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await fetch(`${BASE}/api/realtime/transcribe?device_id=${deviceId}`, {
+        method: "POST",
+        body: form,
+      })
+      return res.json() as Promise<{ text: string }>
+    },
   },
 }

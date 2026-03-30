@@ -1,10 +1,17 @@
-import * as React from "react"
-import { Database, FolderOpen, BookOpen, ChevronRight, Plus } from "lucide-react"
+import * as React from "react";
+import {
+  Database,
+  FolderOpen,
+  BookOpen,
+  ChevronRight,
+  Plus,
+  Activity,
+} from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible"
+} from "@/components/ui/collapsible";
 import {
   Sidebar,
   SidebarContent,
@@ -16,16 +23,19 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-} from "@/components/ui/sidebar"
-import type { Workspace } from "@/types"
+} from "@/components/ui/sidebar";
+import type { Workspace } from "@/types";
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  activePage: "dataset" | "workspace"
-  activeWorkspaceId: number | null
-  workspaces: Workspace[]
-  onSelectDataset: () => void
-  onSelectWorkspace: (ws: Workspace) => void
-  onCreateWorkspace: () => void
+  activePage: "dataset" | "workspace" | "realtime" | null;
+  activeWorkspaceId: number | null;
+  workspaces: Workspace[];
+  workspacesLoading?: boolean;
+  onSelectDataset: () => void;
+  onSelectWorkspace: (ws: Workspace) => void;
+  onSelectRealtime: () => void;
+  onCreateWorkspace: () => void;
+  onCreateWorkspaceDialog?: (open: boolean) => void;
 }
 
 export function AppSidebar({
@@ -34,6 +44,7 @@ export function AppSidebar({
   workspaces,
   onSelectDataset,
   onSelectWorkspace,
+  onSelectRealtime,
   onCreateWorkspace,
   ...props
 }: AppSidebarProps) {
@@ -50,7 +61,9 @@ export function AppSidebar({
                 </div>
                 <div className="flex flex-col gap-0.5 leading-none">
                   <span className="font-semibold text-sm">Knowledge Base</span>
-                  <span className="text-xs text-muted-foreground">Document Library</span>
+                  <span className="text-xs text-muted-foreground">
+                    Document Library
+                  </span>
                 </div>
               </div>
             </SidebarMenuButton>
@@ -70,6 +83,22 @@ export function AppSidebar({
               >
                 <Database className="size-4" />
                 <span>Dataset</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
+        {/* Realtime Monitor */}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={activePage === "realtime"}
+                onClick={onSelectRealtime}
+                className="cursor-pointer"
+              >
+                <Activity className="size-4" />
+                <span>Real-time Monitor</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -95,11 +124,14 @@ export function AppSidebar({
                   {workspaces.map((ws) => (
                     <SidebarMenuItem key={ws.id}>
                       <SidebarMenuButton
-                        isActive={activePage === "workspace" && activeWorkspaceId === ws.id}
+                        isActive={
+                          activePage === "workspace" &&
+                          activeWorkspaceId === ws.id
+                        }
                         onClick={() => onSelectWorkspace(ws)}
                         className="cursor-pointer"
                       >
-                        <span className="truncate">{ws.name}</span>
+                        <span className="pl-2 truncate">{ws.name}</span>
                         <span className="ml-auto text-xs text-muted-foreground shrink-0">
                           {ws.doc_count}
                         </span>
@@ -126,5 +158,5 @@ export function AppSidebar({
 
       <SidebarRail />
     </Sidebar>
-  )
+  );
 }
