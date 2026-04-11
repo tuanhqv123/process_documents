@@ -79,16 +79,11 @@ async def post_transcript(data: TranscriptData):
         "time": datetime.now(TZ_VN).isoformat(),
     })
     # Session RAG hook
-    from api.services.session_service import (
-        get_active_session_id, save_session_transcript, schedule_batch
+    from api.services.session_service import fire_session_rag_hook
+    import asyncio as _asyncio
+    _asyncio.get_event_loop().run_in_executor(
+        None, fire_session_rag_hook, data.device_id, data.text
     )
-    import concurrent.futures as _cf
-    _sid = get_active_session_id()
-    if _sid:
-        _cf.ThreadPoolExecutor(max_workers=1).submit(
-            save_session_transcript, _sid, data.device_id, data.text
-        )
-        schedule_batch(_sid)
     return {"status": "ok"}
 
 
@@ -112,16 +107,11 @@ async def transcribe_audio(device_id: str = "esp32-001", file: UploadFile = File
             "time": datetime.now(TZ_VN).isoformat(),
         })
         # Session RAG hook
-        from api.services.session_service import (
-            get_active_session_id, save_session_transcript, schedule_batch
+        from api.services.session_service import fire_session_rag_hook
+        import asyncio as _asyncio
+        _asyncio.get_event_loop().run_in_executor(
+            None, fire_session_rag_hook, device_id, text
         )
-        import concurrent.futures as _cf
-        _sid = get_active_session_id()
-        if _sid:
-            _cf.ThreadPoolExecutor(max_workers=1).submit(
-                save_session_transcript, _sid, device_id, text
-            )
-            schedule_batch(_sid)
     return {"text": text}
 
 
@@ -281,16 +271,11 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                                     "time": datetime.now(TZ_VN).isoformat(),
                                 })
                                 # Session RAG hook
-                                from api.services.session_service import (
-                                    get_active_session_id, save_session_transcript, schedule_batch
+                                from api.services.session_service import fire_session_rag_hook
+                                import asyncio as _asyncio
+                                _asyncio.get_event_loop().run_in_executor(
+                                    None, fire_session_rag_hook, device_id, text
                                 )
-                                import concurrent.futures as _cf
-                                _sid = get_active_session_id()
-                                if _sid:
-                                    _cf.ThreadPoolExecutor(max_workers=1).submit(
-                                        save_session_transcript, _sid, device_id, text
-                                    )
-                                    schedule_batch(_sid)
 
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON error: {e}")

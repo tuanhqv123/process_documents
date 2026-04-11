@@ -264,6 +264,24 @@ def generate_session_summary(session_id: int) -> str:
         return f"LLM call failed: {e}"
 
 
+def fire_session_rag_hook(device_id: str, content: str) -> None:
+    """Call from any transcript-producing code path.
+
+    Looks up the active session, saves the transcript, and schedules the
+    10-second RAG batch. Runs in the calling thread — use run_in_executor
+    from async callers to avoid blocking the event loop.
+    Silently swallows all errors so a broken session never kills audio.
+    """
+    try:
+        session_id = get_active_session_id()
+        if not session_id:
+            return
+        save_session_transcript(session_id, device_id, content)
+        schedule_batch(session_id)
+    except Exception as e:
+        logger.warning(f"fire_session_rag_hook error: {e}")
+
+
 def _call_llm(prompt: str) -> str:
     from openai import OpenAI
     from api.db import ApiKey
