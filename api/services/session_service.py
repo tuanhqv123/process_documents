@@ -5,7 +5,7 @@ import logging
 import threading
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import text as sql_text
 
 from api.db import (
     RecordingSession, SessionTranscript, SessionRagBlock, get_session
@@ -20,7 +20,7 @@ def get_active_session_id() -> int | None:
     db = get_session()
     try:
         row = db.execute(
-            text("SELECT id FROM recording_sessions WHERE status = 'active' LIMIT 1")
+            sql_text("SELECT id FROM recording_sessions WHERE status = 'active' LIMIT 1")
         ).first()
         return row[0] if row else None
     finally:
@@ -29,14 +29,14 @@ def get_active_session_id() -> int | None:
 
 # ── Save individual transcript ────────────────────────────────────────────────
 
-def save_session_transcript(session_id: int, device_id: str, text_: str) -> None:
+def save_session_transcript(session_id: int, device_id: str, content: str) -> None:
     """Insert one SessionTranscript row (block_id=NULL — aggregator fills it later)."""
     db = get_session()
     try:
         t = SessionTranscript(
             session_id=session_id,
             device_id=device_id,
-            text=text_,
+            text=content,
             created_at=datetime.utcnow(),
         )
         db.add(t)
@@ -82,6 +82,8 @@ def cancel_batch(session_id: int) -> None:
 
 def _flush_batch(session_id: int) -> None:
     """Collect unblocked transcripts, run RAG on combined text, create a SessionRagBlock."""
+    with _timer_lock:
+        _batch_timers.pop(session_id, None)
     db = get_session()
     try:
         session = db.query(RecordingSession).filter(
@@ -148,7 +150,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
         return []
 
     rows = db.execute(
-        text("""
+        sql_text("""
             SELECT
                 n.id, n.doc_id, d.filename,
                 n.text, n.category, n.page_num,
@@ -172,7 +174,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
     for r in rows:
         node_id, doc_id, filename, node_text, category, page_num, bbox, path, score = r
         ancestors = db.execute(
-            text("""
+            sql_text("""
                 SELECT category, text FROM document_nodes
                 WHERE CAST(path AS ltree) @> CAST(:node_path AS ltree)
                   AND path != :node_path
@@ -198,6 +200,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
 def generate_session_summary(session_id: int) -> str:
     """Build prompt from all RAG blocks, call the active LLM, return summary text."""
     db = get_session()
+    prompt = ""
     try:
         session = db.query(RecordingSession).filter(
             RecordingSession.id == session_id
@@ -206,7 +209,7 @@ def generate_session_summary(session_id: int) -> str:
             return ""
 
         ws_row = db.execute(
-            text("SELECT name FROM workspaces WHERE id = :id"),
+            sql_text("SELECT name FROM workspaces WHERE id = :id"),
             {"id": session.workspace_id},
         ).first() if session.workspace_id else None
         ws_name = ws_row[0] if ws_row else "Unknown"
@@ -232,11 +235,9 @@ def generate_session_summary(session_id: int) -> str:
             end = b.block_end.strftime("%H:%M:%S")
             lines.append(f"[{start} – {end}] User said: \"{b.combined_text}\"")
             rag = json.loads(b.rag_results or "[]")
-            if rag:
-                top = rag[0]
+            for match in rag[:3]:
                 lines.append(
-                    f"  → Relevant in \"{top['filename']}\", "
-                    f"page {top['page_num']}: {top['context']}"
+                    f"  → \"{match['filename']}\" p.{match['page_num']}: {match['context']}"
                 )
             lines.append("")
 
@@ -247,9 +248,20 @@ def generate_session_summary(session_id: int) -> str:
             "3. Key insights from the session\n\n"
             "Use markdown with headers."
         )
-        return _call_llm(prompt)
+    except Exception as e:
+        logger.error(f"generate_session_summary DB error: {e}")
+        return f"Summary generation failed: {e}"
     finally:
         db.close()
+
+    if not prompt:
+        return "No transcript data was recorded in this session."
+
+    try:
+        return _call_llm(prompt)
+    except Exception as e:
+        logger.error(f"_call_llm error: {e}")
+        return f"LLM call failed: {e}"
 
 
 def _call_llm(prompt: str) -> str:
