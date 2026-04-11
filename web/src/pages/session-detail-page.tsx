@@ -3,6 +3,7 @@ import {
   Radio, Square, ArrowLeft, Loader2, RefreshCw,
   FileText, BookOpen, ChevronRight, Sparkles, Clock,
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -211,8 +212,8 @@ export function SessionDetailPage({
               <Loader2 className="h-4 w-4 animate-spin" /> Generating summary…
             </div>
           ) : session.summary ? (
-            <div className="px-4 py-3 text-sm whitespace-pre-wrap leading-relaxed">
-              {session.summary}
+            <div className="px-4 py-3 text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown>{session.summary}</ReactMarkdown>
             </div>
           ) : (
             <div className="px-4 py-3 text-sm text-muted-foreground">
@@ -220,6 +221,43 @@ export function SessionDetailPage({
             </div>
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── Page Image with bbox highlight ────────────────────────────────────────────
+
+function PageImage({ src, bbox, alt }: { src: string; bbox: number[]; alt: string }) {
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+
+  useEffect(() => { setNatural(null) }, [src])
+
+  const hasBox = bbox && bbox.length === 4
+
+  return (
+    <div className="relative rounded-lg overflow-hidden border bg-muted/30">
+      <img
+        src={src}
+        alt={alt}
+        className="w-full block"
+        onLoad={(e) => {
+          const img = e.currentTarget
+          setNatural({ w: img.naturalWidth, h: img.naturalHeight })
+        }}
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none" }}
+      />
+      {natural && hasBox && (
+        <div
+          className="absolute border-2 border-yellow-400 bg-yellow-400/20 pointer-events-none rounded-sm"
+          style={{
+            left:   `${(bbox[0] / natural.w) * 100}%`,
+            top:    `${(bbox[1] / natural.h) * 100}%`,
+            width:  `${((bbox[2] - bbox[0]) / natural.w) * 100}%`,
+            height: `${((bbox[3] - bbox[1]) / natural.h) * 100}%`,
+          }}
+        />
       )}
     </div>
   )
@@ -247,11 +285,6 @@ function BlockCard({
         <span className="text-[10px] text-muted-foreground">
           {start} – {end}
         </span>
-        {block.rag_results.length > 0 && (
-          <Badge variant="secondary" className="ml-auto text-[10px] h-4 px-1">
-            {block.rag_results.length} match{block.rag_results.length !== 1 ? "es" : ""}
-          </Badge>
-        )}
       </div>
       <div className="flex flex-col gap-0.5">
         {block.transcripts.map(t => (
@@ -311,9 +344,6 @@ function RagPanel({ block }: { block: SessionRagBlock }) {
                   <span className="truncate">{r.filename}</span>
                 </div>
                 <div className="text-[10px] font-medium">p.{r.page_num} · {r.category}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {Math.round(r.score * 100)}% match
-                </div>
               </button>
             ))}
           </div>
@@ -331,23 +361,18 @@ function RagPanel({ block }: { block: SessionRagBlock }) {
                 ))}
               </div>
 
-              <div className="rounded-lg overflow-hidden border bg-muted/30">
-                <img
-                  src={api.extract.pageImageUrl(selectedResult.doc_id, selectedResult.page_num)}
-                  alt={`Page ${selectedResult.page_num} of ${selectedResult.filename}`}
-                  className="w-full object-contain max-h-72"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none"
-                  }}
-                />
-              </div>
+              <PageImage
+                src={api.extract.pageImageUrl(selectedResult.doc_id, selectedResult.page_num)}
+                bbox={selectedResult.bbox}
+                alt={`Page ${selectedResult.page_num}`}
+              />
 
               <div className="text-xs border rounded-lg p-3 bg-muted/20 leading-relaxed">
                 {selectedResult.text}
               </div>
 
               <div className="text-[10px] text-muted-foreground">
-                Score: {(selectedResult.score * 100).toFixed(1)}% · {selectedResult.filename} p.{selectedResult.page_num}
+                {selectedResult.filename} · p.{selectedResult.page_num}
               </div>
             </div>
           )}
