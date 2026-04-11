@@ -1,4 +1,4 @@
-import type { Chunk, DocImage, Document, Workspace, Formula, OcrPageData, ApiKey, SearchResult, RecordingSession, SessionRagBlock } from "@/types"
+import type { Chunk, DocImage, Document, Workspace, Formula, OcrPageData, ApiKey, SearchResult, RecordingSession, SessionRagBlock, GraphNode } from "@/types"
 
 const BASE = import.meta.env.VITE_API_URL || ""
 

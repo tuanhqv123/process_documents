@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Database, FolderOpen, ArrowLeft, Activity, Wifi, Settings, Radio } from "lucide-react";
+import { Database, FolderOpen, Activity, Wifi, Settings, Radio } from "lucide-react";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import {
   SidebarInset,
@@ -18,7 +18,6 @@ import { DocumentView } from "@/pages/document-view";
 import { SettingsPage } from "@/pages/settings-page";
 import { SessionsPage } from "@/pages/sessions-page";
 import { SessionDetailPage } from "@/pages/session-detail-page";
-import { Button } from "@/components/ui/button";
 import { api } from "@/api/client";
 import type { Document, Workspace, RecordingSession } from "@/types";
 

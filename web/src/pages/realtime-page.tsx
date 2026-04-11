@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo } from "react";
-import { Mic, Activity, TrendingUp, Upload, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Mic, Activity, TrendingUp, Clock } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -17,8 +16,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { api } from "@/api/client";
-
 interface AudioData {
   time: string;
   device_id: string;
@@ -32,13 +29,11 @@ interface Transcript {
   text: string;
 }
 
-const DEVICE_ID = "esp32-001";
 const MAX_AUDIO_POINTS = 60;
 
 export function RealtimePage() {
   const [audioData, setAudioData] = useState<AudioData[]>([]);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [uploading, setUploading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioBuf = useRef<AudioData[]>([]);
 
@@ -128,32 +123,6 @@ export function RealtimePage() {
       clearInterval(flushInterval);
     };
   }, []);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const result = await api.realtime.transcribeAudio(DEVICE_ID, file);
-      if (result.text) {
-        setTranscripts((prev) =>
-          [
-            {
-              time: new Date().toISOString(),
-              device_id: DEVICE_ID,
-              text: result.text,
-            },
-            ...prev,
-          ].slice(0, 100),
-        );
-      }
-    } catch (err) {
-      console.error("Transcribe error:", err);
-    } finally {
-      setUploading(false);
-    }
-  };
 
   return (
     <div className="flex flex-col h-full p-6 gap-4 overflow-y-auto">
@@ -266,7 +235,7 @@ export function RealtimePage() {
                   layout="vertical"
                   margin={{ right: 60 }}
                 >
-                  <XAxis type="number" tick={{ fontSize: 10 }} />
+                  <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
                   <YAxis
                     dataKey="word"
                     type="category"
