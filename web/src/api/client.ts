@@ -1,4 +1,4 @@
-import type { Chunk, DocImage, Document, Workspace, Formula } from "@/types"
+import type { Chunk, DocImage, Document, Workspace, Formula, OcrPageData, ApiKey, SearchResult, RecordingSession, SessionRagBlock } from "@/types"
 
 const BASE = import.meta.env.VITE_API_URL || ""
 
@@ -70,6 +70,49 @@ export const api = {
       request<{ ok: boolean }>(`/api/workspaces/${wsId}/documents/${docId}`, {
         method: "DELETE",
       }),
+    search: (wsId: number, query: string, topK = 8, minScore = 0.0) =>
+      request<SearchResult[]>(`/api/workspaces/${wsId}/search`, {
+        method: "POST",
+        body: JSON.stringify({ query, top_k: topK, min_score: minScore }),
+      }),
+  },
+
+  // ── Extract / Train / OCR ──────────────────────────────────────────────────
+  extract: {
+    start: (id: number) => request<Document>(`/api/documents/${id}/extract`, { method: "POST" }),
+    cancel: (id: number) => request<{ ok: boolean }>(`/api/documents/${id}/extract-cancel`, { method: "POST" }),
+    status: (id: number) => request<Document>(`/api/documents/${id}/extract-status`),
+    train: (id: number) => request<Document>(`/api/documents/${id}/train`, { method: "POST" }),
+    ocrPages: (id: number) => request<{ doc_id: number; total_pages: number; pages: OcrPageData[] }>(`/api/documents/${id}/ocr-pages`),
+    pageImageUrl: (id: number, pageNum: number) => `${BASE}/api/documents/${id}/page-image/${pageNum}`,
+    extractPage: (id: number, page_num: number) =>
+      request<{ ok: boolean; page: number; page_data: OcrPageData }>(`/api/documents/${id}/extract-page?page_num=${page_num}`, { method: "POST" }),
+    updateOcrBlock: (id: number, page_num: number, block_idx: number, text: string) =>
+      request<{ ok: boolean }>(`/api/documents/${id}/ocr-block`, {
+        method: "PATCH",
+        body: JSON.stringify({ page_num, block_idx, text }),
+      }),
+    graph: (id: number) => request<{ doc_id: number; total_nodes: number; leaf_nodes: number; tree: GraphNode }>(`/api/documents/${id}/graph`),
+  },
+
+  // ── API Keys / Model Config ───────────────────────────────────────────────────
+  apiKeys: {
+    list: () => request<ApiKey[]>("/api/api-keys/"),
+    create: (data: { label: string; type: string; base_url: string; api_key?: string; model_name?: string }) =>
+      request<ApiKey>("/api/api-keys/", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: number, data: { label?: string; base_url?: string; api_key?: string; model_name?: string }) =>
+      request<ApiKey>(`/api/api-keys/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: number) => request<{ ok: boolean }>(`/api/api-keys/${id}`, { method: "DELETE" }),
+    activate: (id: number) => request<{ ok: boolean }>(`/api/api-keys/${id}/activate`, { method: "POST" }),
+    test: (id: number) =>
+      request<{ ok: boolean; latency_ms: number; models: string[]; error: string | null }>(
+        `/api/api-keys/${id}/test`, { method: "POST" }
+      ),
+    testConnection: (base_url: string, api_key?: string) =>
+      request<{ ok: boolean; latency_ms: number; models: string[]; error: string | null }>(
+        "/api/api-keys/test-connection",
+        { method: "POST", body: JSON.stringify({ base_url, api_key }) }
+      ),
   },
 
   imageUrl: (imagePath: string) => {
@@ -107,5 +150,27 @@ export const api = {
       })
       return res.json() as Promise<{ text: string }>
     },
+  },
+
+  sessions: {
+    list: () => request<RecordingSession[]>("/api/sessions"),
+    create: (name: string, workspace_id: number | null) =>
+      request<RecordingSession>("/api/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, workspace_id }),
+      }),
+    get: (id: number) => request<RecordingSession>(`/api/sessions/${id}`),
+    delete: (id: number) =>
+      request<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
+    start: (id: number) =>
+      request<RecordingSession>(`/api/sessions/${id}/start`, { method: "POST" }),
+    stop: (id: number) =>
+      request<RecordingSession>(`/api/sessions/${id}/stop`, { method: "POST" }),
+    blocks: (id: number, after?: string) =>
+      request<SessionRagBlock[]>(
+        `/api/sessions/${id}/blocks${after ? `?after=${encodeURIComponent(after)}` : ""}`
+      ),
+    summarize: (id: number) =>
+      request<RecordingSession>(`/api/sessions/${id}/summarize`, { method: "POST" }),
   },
 }
