@@ -171,6 +171,7 @@ class WorkspaceDoc(Base):
 
 
 class RecordingSession(Base):
+    """A recording session. status: idle → active → stopped. summary populated at session end."""
     __tablename__ = "recording_sessions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -182,6 +183,9 @@ class RecordingSession(Base):
     ended_at = Column(DateTime, nullable=True)
     summary = Column(Text, nullable=True)     # LLM-generated summary at session end
 
+    transcripts = relationship("SessionTranscript", back_populates="session", cascade="all, delete-orphan")
+    rag_blocks = relationship("SessionRagBlock", back_populates="session", cascade="all, delete-orphan")
+
 
 class SessionTranscript(Base):
     """One row per Whisper chunk (~2 s). Linked to a RAG block once aggregated."""
@@ -190,11 +194,14 @@ class SessionTranscript(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(Integer, ForeignKey("recording_sessions.id", ondelete="CASCADE"),
                         nullable=False, index=True)
-    block_id = Column(Integer, ForeignKey("session_rag_blocks.id", ondelete="SET NULL"),
+    block_id = Column(Integer, ForeignKey("session_rag_blocks.id", ondelete="SET NULL", use_alter=True),
                       nullable=True, index=True)   # NULL until the 10-s batch fires
-    device_id = Column(String, default="esp32-001")
+    device_id = Column(String, nullable=False)
     text = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("RecordingSession", back_populates="transcripts")
+    block = relationship("SessionRagBlock", back_populates="transcripts")
 
 
 class SessionRagBlock(Base):
@@ -208,6 +215,9 @@ class SessionRagBlock(Base):
     block_end = Column(DateTime, nullable=False)    # timestamp of latest transcript in window
     combined_text = Column(Text, nullable=False)    # all transcript texts joined by space
     rag_results = Column(Text, default="[]")        # JSON list of SearchResult-shaped dicts
+
+    session = relationship("RecordingSession", back_populates="rag_blocks")
+    transcripts = relationship("SessionTranscript", back_populates="block")
 
 
 def get_db():
