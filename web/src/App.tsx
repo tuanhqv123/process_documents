@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Database, FolderOpen, ArrowLeft, Activity, Wifi } from "lucide-react";
+import { Database, FolderOpen, ArrowLeft, Activity, Wifi, Settings, Radio } from "lucide-react";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import {
   SidebarInset,
@@ -15,9 +15,12 @@ import { DatasetPage } from "@/pages/dataset-page";
 import { WorkspacePage } from "@/pages/workspace-page";
 import { RealtimePage } from "@/pages/realtime-page";
 import { DocumentView } from "@/pages/document-view";
+import { SettingsPage } from "@/pages/settings-page";
+import { SessionsPage } from "@/pages/sessions-page";
+import { SessionDetailPage } from "@/pages/session-detail-page";
 import { Button } from "@/components/ui/button";
 import { api } from "@/api/client";
-import type { Document, Workspace } from "@/types";
+import type { Document, Workspace, RecordingSession } from "@/types";
 
 function AppContent() {
   const navigate = useNavigate();
@@ -29,11 +32,14 @@ function AppContent() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(
     null,
   );
+  const [selectedSession, setSelectedSession] = useState<RecordingSession | null>(null)
   const [loading, setLoading] = useState(true);
 
   const isRealtime = location.pathname === "/monitor";
   const isDataset = location.pathname === "/dataset" || location.pathname.startsWith("/dataset/");
   const isWorkspace = location.pathname === "/workspace" || location.pathname.startsWith("/workspace/");
+  const isSettings = location.pathname === "/settings";
+  const isSessions = location.pathname === "/sessions" || location.pathname.startsWith("/sessions/")
 
   useEffect(() => {
     Promise.all([api.documents.list(), api.workspaces.list()])
@@ -59,6 +65,15 @@ function AppContent() {
       if (ws) setActiveWorkspace(ws);
     }
   }, [location.pathname, workspaces]);
+
+  useEffect(() => {
+    const sessionId = location.pathname.match(/^\/sessions\/(\d+)$/)?.[1]
+    if (sessionId) {
+      api.sessions.get(parseInt(sessionId))
+        .then(s => setSelectedSession(s))
+        .catch(() => navigate("/sessions"))
+    }
+  }, [location.pathname])
 
   const handleDocumentAdded = (doc: Document) => {
     setDocuments((prev) => [doc, ...prev]);
@@ -113,9 +128,21 @@ function AppContent() {
     }
   };
 
+  const handleSelectSession = (s: RecordingSession) => {
+    setSelectedSession(s)
+    navigate(`/sessions/${s.id}`)
+  }
+
+  const handleSessionUpdated = (s: RecordingSession) => {
+    if (selectedSession?.id === s.id) setSelectedSession(s)
+  }
+
   const breadcrumb = (() => {
     if (isRealtime) {
       return [{ icon: <Activity className="h-4 w-4" />, label: "Real-time Monitor" }];
+    }
+    if (isSettings) {
+      return [{ icon: <Settings className="h-4 w-4" />, label: "Settings" }];
     }
     if (isDataset) {
       return selectedDoc
@@ -128,6 +155,18 @@ function AppContent() {
             { label: selectedDoc.filename },
           ]
         : [{ icon: <Database className="h-4 w-4" />, label: "Dataset" }];
+    }
+    if (isSessions) {
+      return selectedSession
+        ? [
+            {
+              icon: <Radio className="h-4 w-4" />,
+              label: "Sessions",
+              onClick: () => { setSelectedSession(null); navigate("/sessions"); },
+            },
+            { label: selectedSession.name },
+          ]
+        : [{ icon: <Radio className="h-4 w-4" />, label: "Sessions" }];
     }
     return [
       { icon: <FolderOpen className="h-4 w-4" />, label: "Workspaces" },
@@ -148,14 +187,23 @@ function AppContent() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="kb-theme">
       <TooltipProvider>
-        <SidebarProvider>
+        <SidebarProvider className="h-full overflow-hidden">
           <AppSidebar
-            activePage={isRealtime ? "realtime" : isDataset ? "dataset" : isWorkspace ? "workspace" : null}
+            activePage={
+              isRealtime ? "realtime"
+              : isSettings ? "settings"
+              : isDataset ? "dataset"
+              : isWorkspace ? "workspace"
+              : isSessions ? "sessions"
+              : null
+            }
             activeWorkspaceId={activeWorkspace?.id ?? null}
             workspaces={workspaces}
             onSelectDataset={() => { setSelectedDoc(null); navigate("/dataset"); }}
             onSelectWorkspace={handleSelectWorkspace}
             onSelectRealtime={() => { setRealtimeKey(k => k + 1); navigate("/monitor"); }}
+            onSelectSettings={() => navigate("/settings")}
+            onSelectSessions={() => { setSelectedSession(null); navigate("/sessions"); }}
             onCreateWorkspace={() => {}}
             workspacesLoading={loading}
             onCreateWorkspaceDialog={(open) => {
@@ -166,7 +214,7 @@ function AppContent() {
             }}
           />
 
-          <SidebarInset>
+          <SidebarInset className="min-h-0 overflow-hidden">
             <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
               <SidebarTrigger className="-ml-1" />
               <Separator orientation="vertical" className="" />
@@ -201,30 +249,22 @@ function AppContent() {
             </header>
 
             <div className="flex flex-1 overflow-hidden">
-              {isRealtime ? (
+              {isSettings ? (
+                <div className="flex-1 overflow-y-auto">
+                  <SettingsPage />
+                </div>
+              ) : isRealtime ? (
                 <div className="flex-1 overflow-hidden">
                   <RealtimePage key={realtimeKey} />
                 </div>
               ) : isDataset ? (
                 selectedDoc ? (
-                  <div className="flex-1 flex flex-col overflow-hidden">
-                    <div className="px-6 pt-3 pb-0 shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1.5 -ml-2 text-muted-foreground"
-                        onClick={() => { setSelectedDoc(null); navigate("/dataset"); }}
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                        Back to Dataset
-                      </Button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto">
-                      <DocumentView
-                        document={selectedDoc}
-                        onDocumentUpdated={handleDocumentUpdated}
-                      />
-                    </div>
+                  <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+                    <DocumentView
+                      document={selectedDoc}
+                      onDocumentUpdated={handleDocumentUpdated}
+                      onBack={() => { setSelectedDoc(null); navigate("/dataset"); }}
+                    />
                   </div>
                 ) : (
                   <div className="flex-1 overflow-y-auto">
@@ -235,6 +275,23 @@ function AppContent() {
                       onDocumentAdded={handleDocumentAdded}
                       onDocumentDeleted={handleDocumentDeleted}
                       onDocumentUpdated={handleDocumentUpdated}
+                    />
+                  </div>
+                )
+              ) : isSessions ? (
+                selectedSession ? (
+                  <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+                    <SessionDetailPage
+                      session={selectedSession}
+                      onBack={() => { setSelectedSession(null); navigate("/sessions"); }}
+                      onSessionUpdated={handleSessionUpdated}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto">
+                    <SessionsPage
+                      workspaces={workspaces}
+                      onSelectSession={handleSelectSession}
                     />
                   </div>
                 )
@@ -274,6 +331,9 @@ export default function App() {
         <Route path="/workspace" element={<AppContent />} />
         <Route path="/workspace/:id" element={<AppContent />} />
         <Route path="/monitor" element={<AppContent />} />
+        <Route path="/settings" element={<AppContent />} />
+        <Route path="/sessions" element={<AppContent />} />
+        <Route path="/sessions/:id" element={<AppContent />} />
         <Route path="*" element={<AppContent />} />
       </Routes>
     </BrowserRouter>
