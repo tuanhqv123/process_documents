@@ -3,7 +3,9 @@
 import asyncio
 import struct
 import math
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+TZ_VN = timezone(timedelta(hours=7))
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,6 +19,9 @@ from api.routes.documents import router as docs_router, chunks_router, images_ro
 from api.routes.workspaces import router as ws_router
 from api.routes.search import router as search_router
 from api.routes.realtime import router as realtime_router, manager, save_audio_level, save_transcript, whisper_client
+from api.routes.extract import router as extract_router
+from api.routes.api_keys import router as api_keys_router
+from api.routes.sessions import router as sessions_router
 
 import json
 import logging
@@ -63,6 +68,9 @@ app.include_router(images_router)
 app.include_router(ws_router)
 app.include_router(search_router)
 app.include_router(realtime_router)
+app.include_router(extract_router)
+app.include_router(api_keys_router)
+app.include_router(sessions_router)
 
 
 @app.websocket("/ws")
@@ -91,7 +99,7 @@ async def websocket_root(websocket: WebSocket):
                     "device_id": device_id,
                     "amplitude": amplitude,
                     "peak": peak,
-                    "time": datetime.now().isoformat(),
+                    "time": datetime.now(TZ_VN).isoformat(),
                 })
 
                 # Accumulate audio for whisper transcription
@@ -107,9 +115,22 @@ async def websocket_root(websocket: WebSocket):
                             await manager.publish_sse("transcript", {
                                 "device_id": device_id,
                                 "text": text,
-                                "time": datetime.now().isoformat(),
+                                "time": datetime.now(TZ_VN).isoformat(),
                             })
                             logger.info(f"Transcript: {text}")
+                            # Session RAG hook
+                            from api.services.session_service import (
+                                get_active_session_id,
+                                save_session_transcript,
+                                schedule_batch,
+                            )
+                            import concurrent.futures as _cf
+                            _sid = get_active_session_id()
+                            if _sid:
+                                _cf.ThreadPoolExecutor(max_workers=1).submit(
+                                    save_session_transcript, _sid, device_id, text
+                                )
+                                schedule_batch(_sid)
                     except Exception as e:
                         logger.error(f"Transcribe error: {e}")
 
@@ -125,7 +146,7 @@ async def websocket_root(websocket: WebSocket):
                         "device_id": device_id,
                         "amplitude": amplitude,
                         "peak": peak,
-                        "time": datetime.now().isoformat(),
+                        "time": datetime.now(TZ_VN).isoformat(),
                     })
                 except:
                     pass

@@ -2,7 +2,9 @@ import json
 import asyncio
 import base64
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+TZ_VN = timezone(timedelta(hours=7))
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -63,7 +65,7 @@ async def post_audio(data: AudioData):
         "device_id": data.device_id,
         "amplitude": data.amplitude,
         "peak": data.peak,
-        "time": datetime.now().isoformat(),
+        "time": datetime.now(TZ_VN).isoformat(),
     })
     return {"status": "ok"}
 
@@ -74,8 +76,19 @@ async def post_transcript(data: TranscriptData):
     await manager.publish_sse("transcript", {
         "device_id": data.device_id,
         "text": data.text,
-        "time": datetime.now().isoformat(),
+        "time": datetime.now(TZ_VN).isoformat(),
     })
+    # Session RAG hook
+    from api.services.session_service import (
+        get_active_session_id, save_session_transcript, schedule_batch
+    )
+    import concurrent.futures as _cf
+    _sid = get_active_session_id()
+    if _sid:
+        _cf.ThreadPoolExecutor(max_workers=1).submit(
+            save_session_transcript, _sid, data.device_id, data.text
+        )
+        schedule_batch(_sid)
     return {"status": "ok"}
 
 
@@ -96,8 +109,19 @@ async def transcribe_audio(device_id: str = "esp32-001", file: UploadFile = File
         await manager.publish_sse("transcript", {
             "device_id": device_id,
             "text": text,
-            "time": datetime.now().isoformat(),
+            "time": datetime.now(TZ_VN).isoformat(),
         })
+        # Session RAG hook
+        from api.services.session_service import (
+            get_active_session_id, save_session_transcript, schedule_batch
+        )
+        import concurrent.futures as _cf
+        _sid = get_active_session_id()
+        if _sid:
+            _cf.ThreadPoolExecutor(max_workers=1).submit(
+                save_session_transcript, _sid, device_id, text
+            )
+            schedule_batch(_sid)
     return {"text": text}
 
 
@@ -199,7 +223,7 @@ async def websocket_root(websocket: WebSocket):
                             "device_id": device_id,
                             "amplitude": amplitude,
                             "peak": peak,
-                            "time": datetime.now().isoformat(),
+                            "time": datetime.now(TZ_VN).isoformat(),
                         })
                 except json.JSONDecodeError:
                     pass
@@ -213,7 +237,7 @@ async def websocket_root(websocket: WebSocket):
                     await manager.publish_sse("transcript", {
                         "device_id": device_id,
                         "text": text,
-                        "time": datetime.now().isoformat(),
+                        "time": datetime.now(TZ_VN).isoformat(),
                     })
     except Exception as e:
         logger.error(f"WS error: {e}")
@@ -244,7 +268,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                                 "device_id": device_id,
                                 "amplitude": amplitude,
                                 "peak": peak,
-                                "time": datetime.now().isoformat(),
+                                "time": datetime.now(TZ_VN).isoformat(),
                             })
 
                         elif audio_type == "transcript":
@@ -254,8 +278,19 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                                 await manager.publish_sse("transcript", {
                                     "device_id": device_id,
                                     "text": text,
-                                    "time": datetime.now().isoformat(),
+                                    "time": datetime.now(TZ_VN).isoformat(),
                                 })
+                                # Session RAG hook
+                                from api.services.session_service import (
+                                    get_active_session_id, save_session_transcript, schedule_batch
+                                )
+                                import concurrent.futures as _cf
+                                _sid = get_active_session_id()
+                                if _sid:
+                                    _cf.ThreadPoolExecutor(max_workers=1).submit(
+                                        save_session_transcript, _sid, device_id, text
+                                    )
+                                    schedule_batch(_sid)
 
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON error: {e}")
@@ -269,7 +304,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         await manager.publish_sse("transcript", {
                             "device_id": device_id,
                             "text": text,
-                            "time": datetime.now().isoformat(),
+                            "time": datetime.now(TZ_VN).isoformat(),
                         })
             except RuntimeError:
                 break
