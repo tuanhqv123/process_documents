@@ -29,6 +29,12 @@ class DocumentOut(BaseModel):
     status: str
     error: Optional[str]
     created_at: str
+    # OCR extraction fields
+    extract_progress: int = 0
+    extract_message: Optional[str] = None
+    extracted_pages: int = 0
+    total_pages_ocr: int = 0
+    ocr_data_path: Optional[str] = None
 
 
 class ChunkOut(BaseModel):
@@ -74,3 +80,28 @@ class FormulaOut(BaseModel):
 
 class AddDocToWorkspace(BaseModel):
     doc_id: int
+
+
+class ApiKeyCreate(BaseModel):
+    label: str
+    type: str  # "ocr" | "llm"
+    base_url: str
+    api_key: str = ""
+    model_name: str = ""
+
+
+class ApiKeyUpdate(BaseModel):
+    label: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+
+
+class ApiKeyOut(BaseModel):
+    id: int
+    label: str
+    type: str
+    # base_url is intentionally hidden from responses
+    model_name: str
+    is_active: bool
+    created_at: str

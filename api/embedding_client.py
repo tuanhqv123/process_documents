@@ -6,7 +6,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://host.docker.internal:8001")
+EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://localhost:8001")
+BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
 
 class EmbeddingClient:
@@ -32,6 +33,10 @@ class EmbeddingClient:
     def embed_single(self, text: str) -> list[float]:
         results = self.embed_texts([text])
         return results[0]
+
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a retrieval query with BGE instruction prefix."""
+        return self.embed_single(BGE_QUERY_INSTRUCTION + text)
 
     def is_healthy(self) -> bool:
         try:

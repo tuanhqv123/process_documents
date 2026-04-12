@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
-import { Mic, Activity, TrendingUp, Upload, Clock } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { Mic, Activity, TrendingUp, Clock, Volume2, VolumeX } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -17,8 +16,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { api } from "@/api/client";
-
 interface AudioData {
   time: string;
   device_id: string;
@@ -32,15 +29,98 @@ interface Transcript {
   text: string;
 }
 
-const DEVICE_ID = "esp32-001";
-const MAX_AUDIO_POINTS = 60;
+const MAX_AUDIO_POINTS = 80;
+
 
 export function RealtimePage() {
   const [audioData, setAudioData] = useState<AudioData[]>([]);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [uploading, setUploading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioBuf = useRef<AudioData[]>([]);
+  const emaRef = useRef<number>(0);
+
+  // Live audio playback — server sends pre-cleaned PCM (bandpass + gated)
+  const [playback, setPlayback] = useState(false);
+  const playbackRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const chainRef = useRef<AudioNode | null>(null);
+  const nextTimeRef = useRef(0);
+  const pcmAccRef = useRef<Int16Array[]>([]);
+  const pcmAccLen = useRef(0);
+  const audioWsRef = useRef<WebSocket | null>(null);
+
+  // Flush accumulated PCM as one AudioBuffer — browser resamples 16k→native natively
+  const flushPcm = useCallback((ctx: AudioContext, chain: AudioNode) => {
+    const ACC = 4000; // 250ms @ 16kHz
+    if (pcmAccLen.current < ACC) return;
+    const combined = new Int16Array(pcmAccLen.current);
+    let off = 0;
+    for (const c of pcmAccRef.current) { combined.set(c, off); off += c.length; }
+    pcmAccRef.current = [];
+    pcmAccLen.current = 0;
+
+    const f32 = new Float32Array(combined.length);
+    for (let i = 0; i < combined.length; i++) f32[i] = combined[i] / 32768;
+
+    const buf = ctx.createBuffer(1, f32.length, 16000);
+    buf.copyToChannel(f32, 0);
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(chain);
+
+    const now = ctx.currentTime;
+    if (nextTimeRef.current < now + 0.2) nextTimeRef.current = now + 0.2;
+    src.start(nextTimeRef.current);
+    nextTimeRef.current += buf.duration;
+  }, []);
+
+  const togglePlayback = useCallback(async () => {
+    const next = !playbackRef.current;
+    playbackRef.current = next;
+    setPlayback(next);
+
+    if (next) {
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      nextTimeRef.current = 0;
+      pcmAccRef.current = [];
+      pcmAccLen.current = 0;
+
+      // Audio arrives pre-cleaned from server (WebRTC NS)
+      // Just a light peak limiter here
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -12;
+      comp.knee.value = 6;
+      comp.ratio.value = 4;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.25;
+      comp.connect(ctx.destination);
+      chainRef.current = comp;
+
+      const base = (import.meta.env.VITE_API_URL || window.location.origin)
+        .replace(/^https/, "wss").replace(/^http/, "ws");
+      const ws = new WebSocket(`${base}/ws/audio-monitor`);
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = (ev) => {
+        const ctx = audioCtxRef.current;
+        const chain = chainRef.current;
+        if (!ctx || !chain || !playbackRef.current) return;
+        const int16 = new Int16Array(ev.data as ArrayBuffer);
+        pcmAccRef.current.push(int16);
+        pcmAccLen.current += int16.length;
+        flushPcm(ctx, chain);
+      };
+      ws.onclose = () => { if (playbackRef.current) audioWsRef.current = null; };
+      audioWsRef.current = ws;
+    } else {
+      audioWsRef.current?.close();
+      audioWsRef.current = null;
+      chainRef.current = null;
+      audioCtxRef.current?.close();
+      audioCtxRef.current = null;
+    }
+  }, [flushPcm]);
 
   // Timeline: group transcripts by hour for last 12 hours
   const timelineData = useMemo(() => {
@@ -100,6 +180,7 @@ export function RealtimePage() {
         } catch {}
       });
 
+
       es.onerror = () => {
         es?.close();
         reconnectTimer = setTimeout(connect, 3000);
@@ -108,18 +189,14 @@ export function RealtimePage() {
 
     connect();
 
-    // Flush every 1s — average all buffered samples into one smooth point
+    // Flush every 1s — matches server SSE publish rate.
+    // Each SSE event = 1 averaged data point, so just push directly.
     const flushInterval = setInterval(() => {
       if (audioBuf.current.length === 0) return;
       const batch = audioBuf.current.splice(0);
-      const avg: AudioData = {
-        time: batch[batch.length - 1].time,
-        device_id: batch[0].device_id,
-        amplitude:
-          batch.reduce((s, d) => s + d.amplitude, 0) / batch.length,
-        peak: batch.reduce((s, d) => s + d.peak, 0) / batch.length,
-      };
-      setAudioData((prev) => [...prev, avg].slice(-MAX_AUDIO_POINTS));
+      // Take the latest SSE point (already averaged on server)
+      const last = batch[batch.length - 1];
+      setAudioData((prev) => [...prev, last].slice(-MAX_AUDIO_POINTS));
     }, 1000);
 
     return () => {
@@ -129,32 +206,6 @@ export function RealtimePage() {
     };
   }, []);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const result = await api.realtime.transcribeAudio(DEVICE_ID, file);
-      if (result.text) {
-        setTranscripts((prev) =>
-          [
-            {
-              time: new Date().toISOString(),
-              device_id: DEVICE_ID,
-              text: result.text,
-            },
-            ...prev,
-          ].slice(0, 100),
-        );
-      }
-    } catch (err) {
-      console.error("Transcribe error:", err);
-    } finally {
-      setUploading(false);
-    }
-  };
-
   return (
     <div className="flex flex-col h-full p-6 gap-4 overflow-y-auto">
       <Card className="shrink-0">
@@ -162,6 +213,18 @@ export function RealtimePage() {
           <CardTitle className="text-lg flex items-center gap-2">
             <Activity className="h-4 w-4" />
             Audio Amplitude
+            <button
+              onClick={togglePlayback}
+              className={`ml-auto flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                playback
+                  ? "bg-green-500/20 text-green-400 hover:bg-green-500/30"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+              title={playback ? "Stop listening" : "Hear live audio"}
+            >
+              {playback ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3" />}
+              {playback ? "Listening" : "Hear audio"}
+            </button>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -191,7 +254,9 @@ export function RealtimePage() {
                 <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                 <XAxis
                   dataKey="time"
-                  tick={{ fontSize: 10 }}
+                  tick={false}
+                  axisLine={false}
+                  tickLine={false}
                   interval="preserveStartEnd"
                 />
                 <YAxis
@@ -207,7 +272,8 @@ export function RealtimePage() {
                   stroke="#22c55e"
                   fillOpacity={1}
                   fill="url(#colorAmplitude)"
-                  strokeWidth={2}
+                  strokeWidth={1.5}
+                  dot={false}
                   isAnimationActive={false}
                 />
               </AreaChart>
@@ -266,7 +332,7 @@ export function RealtimePage() {
                   layout="vertical"
                   margin={{ right: 60 }}
                 >
-                  <XAxis type="number" tick={{ fontSize: 10 }} />
+                  <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
                   <YAxis
                     dataKey="word"
                     type="category"

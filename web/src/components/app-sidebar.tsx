@@ -6,6 +6,8 @@ import {
   ChevronRight,
   Plus,
   Activity,
+  Settings,
+  Radio,
 } from "lucide-react";
 import {
   Collapsible,
@@ -27,13 +29,15 @@ import {
 import type { Workspace } from "@/types";
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  activePage: "dataset" | "workspace" | "realtime" | null;
+  activePage: "dataset" | "workspace" | "realtime" | "sessions" | "settings" | null;
   activeWorkspaceId: number | null;
   workspaces: Workspace[];
   workspacesLoading?: boolean;
   onSelectDataset: () => void;
   onSelectWorkspace: (ws: Workspace) => void;
   onSelectRealtime: () => void;
+  onSelectSessions: () => void;
+  onSelectSettings: () => void;
   onCreateWorkspace: () => void;
   onCreateWorkspaceDialog?: (open: boolean) => void;
 }
@@ -45,6 +49,8 @@ export function AppSidebar({
   onSelectDataset,
   onSelectWorkspace,
   onSelectRealtime,
+  onSelectSessions,
+  onSelectSettings,
   onCreateWorkspace,
   ...props
 }: AppSidebarProps) {
@@ -99,6 +105,38 @@ export function AppSidebar({
               >
                 <Activity className="size-4" />
                 <span>Real-time Monitor</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
+        {/* Sessions */}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={activePage === "sessions"}
+                onClick={onSelectSessions}
+                className="cursor-pointer"
+              >
+                <Radio className="size-4" />
+                <span>Sessions</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
+        {/* Settings */}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={activePage === "settings"}
+                onClick={onSelectSettings}
+                className="cursor-pointer"
+              >
+                <Settings className="size-4" />
+                <span>Settings</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

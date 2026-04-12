@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from api.db import get_session, Chunk, Document, WorkspaceDoc
+from api.db import get_session
 from api.embedding_client import embedding_client
 
 router = APIRouter(prefix="/api/workspaces", tags=["search"])
@@ -19,8 +19,10 @@ class SearchResult(BaseModel):
     doc_id: int
     filename: str
     text: str
-    page_start: int
-    page_end: int
+    context: str          # "Title > Section > text"
+    category: str
+    page_num: int
+    bbox: list[float]
     score: float
 
 
@@ -33,11 +35,8 @@ def _get_db():
 
 
 @router.post("/{ws_id}/search", response_model=list[SearchResult])
-def search_workspace(ws_id: int, body: SearchRequest, db= Depends(_get_db)):
-    ws = db.execute(
-        text("SELECT 1 FROM workspaces WHERE id = :id"),
-        {"id": ws_id}
-    ).first()
+def search_workspace(ws_id: int, body: SearchRequest, db=Depends(_get_db)):
+    ws = db.execute(text("SELECT 1 FROM workspaces WHERE id = :id"), {"id": ws_id}).first()
     if not ws:
         raise HTTPException(404, "Workspace not found")
 
@@ -46,31 +45,78 @@ def search_workspace(ws_id: int, body: SearchRequest, db= Depends(_get_db)):
     except Exception as e:
         raise HTTPException(503, f"Embedding service unavailable: {e}")
 
-    results = db.execute(
+    # Vector search on leaf nodes (node_rank=3) across documents in this workspace
+    rows = db.execute(
         text("""
-            SELECT c.id, c.doc_id, d.filename, c.text, c.page_start, c.page_end,
-                   1 - (c.embedding <=> :query_embedding) AS score
-            FROM chunks c
-            JOIN documents d ON d.id = c.doc_id
-            JOIN workspace_docs wd ON wd.doc_id = c.doc_id
+            SELECT
+                n.id,
+                n.doc_id,
+                d.filename,
+                n.text,
+                n.category,
+                n.page_num,
+                COALESCE(n.bbox, '{}') AS bbox,
+                n.path,
+                1 - (n.embedding <=> CAST(:qemb AS vector)) AS score
+            FROM document_nodes n
+            JOIN documents d ON d.id = n.doc_id
+            JOIN workspace_docs wd ON wd.doc_id = n.doc_id
             WHERE wd.workspace_id = :ws_id
-              AND c.embedding IS NOT NULL
-              AND (1 - (c.embedding <=> :query_embedding)) >= :min_score
-            ORDER BY c.embedding <=> :query_embedding
+              AND n.node_rank = 3
+              AND n.embedding IS NOT NULL
+              AND n.text != ''
+              AND (1 - (n.embedding <=> CAST(:qemb AS vector))) >= :min_score
+            ORDER BY n.embedding <=> CAST(:qemb AS vector)
             LIMIT :top_k
         """),
-        {"query_embedding": str(query_embedding), "ws_id": ws_id, "top_k": body.top_k, "min_score": body.min_score}
+        {
+            "qemb": str(query_embedding),
+            "ws_id": ws_id,
+            "top_k": body.top_k,
+            "min_score": body.min_score,
+        },
     ).fetchall()
 
-    return [
-        SearchResult(
-            id=r[0],
-            doc_id=r[1],
-            filename=r[2],
-            text=r[3],
-            page_start=r[4],
-            page_end=r[5],
-            score=float(r[6]),
+    if not rows:
+        return []
+
+    # For each result, fetch its structural ancestors (Title, Section-header)
+    # to build the context breadcrumb
+    results = []
+    for r in rows:
+        node_id, doc_id, filename, node_text, category, page_num, bbox, path, score = r
+
+        # Get ancestor titles/sections via ltree
+        ancestors = db.execute(
+            text("""
+                SELECT category, text
+                FROM document_nodes
+                WHERE CAST(path AS ltree) @> CAST(:node_path AS ltree)
+                  AND path != :node_path
+                  AND category IN ('Title', 'Section-header')
+                  AND text != ''
+                ORDER BY depth ASC
+            """),
+            {"node_path": path},
+        ).fetchall()
+
+        breadcrumb_parts = [a.text for a in ancestors if a.text]
+        if node_text:
+            breadcrumb_parts.append(node_text)
+        context = " > ".join(breadcrumb_parts)
+
+        results.append(
+            SearchResult(
+                id=node_id,
+                doc_id=doc_id,
+                filename=filename,
+                text=node_text or "",
+                context=context,
+                category=category,
+                page_num=page_num or 0,
+                bbox=list(bbox) if bbox else [],
+                score=float(score),
+            )
         )
-        for r in results
-    ]
+
+    return results

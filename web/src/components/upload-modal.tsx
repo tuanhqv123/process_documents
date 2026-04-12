@@ -25,8 +25,9 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (f: File) => {
-    if (!f.name.toLowerCase().endsWith(".pdf")) {
-      setError("Only PDF files are supported")
+    const lower = f.name.toLowerCase()
+    if (!lower.endsWith(".pdf") && !lower.endsWith(".pptx") && !lower.endsWith(".ppt")) {
+      setError("Only PDF and PPTX files are supported")
       return
     }
     setError("")
@@ -68,7 +69,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Upload PDF</DialogTitle>
+          <DialogTitle>Upload Document</DialogTitle>
           <DialogDescription>
             The document will be processed and added to your dataset.
           </DialogDescription>
@@ -89,7 +90,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
           <input
             ref={inputRef}
             type="file"
-            accept=".pdf"
+            accept=".pdf,.pptx,.ppt"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0]
@@ -105,7 +106,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
           ) : (
             <div className="flex flex-col items-center gap-2">
               <Upload className="h-10 w-10 text-muted-foreground" />
-              <p className="font-medium text-sm">Drag & drop a PDF here</p>
+              <p className="font-medium text-sm">Drag & drop a PDF or PPTX here</p>
               <p className="text-xs text-muted-foreground">or click to browse</p>
             </div>
           )}
