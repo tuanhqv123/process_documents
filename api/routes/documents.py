@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from api.db import get_session, Document, Chunk, DocImage, Formula, WorkspaceDoc
 from api.models import DocumentOut, ChunkOut, ImageOut, ImageUpdate, FormulaOut, ChunkUpdate
-from api.processor import start_processing
 from api.embedding_client import embedding_client
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -35,17 +34,19 @@ def list_documents(db: Session = Depends(_get_db)):
 
 @router.post("/upload", response_model=DocumentOut)
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(_get_db)):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are supported")
+    ALLOWED_EXT = (".pdf", ".pptx", ".ppt")
+    if not file.filename.lower().endswith(ALLOWED_EXT):
+        raise HTTPException(400, "Supported formats: PDF, PPTX")
 
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    ext = Path(file.filename).suffix.lower()
     dest = UPLOADS_DIR / file.filename
     counter = 1
     while dest.exists():
         stem = Path(file.filename).stem
-        dest = UPLOADS_DIR / f"{stem}_{counter}.pdf"
+        dest = UPLOADS_DIR / f"{stem}_{counter}{ext}"
         counter += 1
 
     with open(dest, "wb") as f:
@@ -57,14 +58,11 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(_g
         filename=file.filename,
         file_path=str(dest),
         file_size=file_size,
-        status="pending",
+        status="uploaded",
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
-
-    image_output_dir = str(IMAGES_DIR / f"doc_{doc.id}")
-    start_processing(doc.id, str(dest), image_output_dir)
 
     return _doc_model(doc)
 
@@ -88,6 +86,17 @@ def delete_document(doc_id: int, db: Session = Depends(_get_db)):
         pass
     try:
         shutil.rmtree(IMAGES_DIR / f"doc_{doc_id}", ignore_errors=True)
+    except Exception:
+        pass
+    # Clean up OCR data
+    from pathlib import Path as _Path
+    from api.config import settings as _settings
+    try:
+        shutil.rmtree(_Path(_settings.OCR_IMAGES_DIR) / str(doc_id), ignore_errors=True)
+    except Exception:
+        pass
+    try:
+        (_Path(_settings.OCR_DATA_DIR) / f"{doc_id}_ocr.json").unlink(missing_ok=True)
     except Exception:
         pass
     db.delete(doc)
@@ -194,6 +203,11 @@ def _doc_model(r) -> DocumentOut:
         status=r.status,
         error=r.error,
         created_at=r.created_at.isoformat() if r.created_at else "",
+        extract_progress=r.extract_progress or 0,
+        extract_message=r.extract_message,
+        extracted_pages=r.extracted_pages or 0,
+        total_pages_ocr=r.total_pages_ocr or 0,
+        ocr_data_path=r.ocr_data_path,
     )
 
 

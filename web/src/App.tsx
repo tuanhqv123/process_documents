@@ -203,7 +203,10 @@ function AppContent() {
             onSelectRealtime={() => { setRealtimeKey(k => k + 1); navigate("/monitor"); }}
             onSelectSettings={() => navigate("/settings")}
             onSelectSessions={() => { setSelectedSession(null); navigate("/sessions"); }}
-            onCreateWorkspace={() => {}}
+            onCreateWorkspace={() => {
+              const name = prompt("Workspace name:");
+              if (name) handleCreateWorkspace(name, () => {});
+            }}
             workspacesLoading={loading}
             onCreateWorkspaceDialog={(open) => {
               if (open) {

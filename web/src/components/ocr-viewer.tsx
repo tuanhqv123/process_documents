@@ -75,6 +75,7 @@ export function OcrViewer({ docId, pages: initialPages, totalPages, currentPage:
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [pageImage, setPageImage] = useState<string | null>(null)
+  const [imgLoaded, setImgLoaded] = useState(false)
   const [loadingPage, setLoadingPage] = useState(false)
   const [imgNatural, setImgNatural] = useState({ w: 0, h: 0 })
 
@@ -99,6 +100,7 @@ export function OcrViewer({ docId, pages: initialPages, totalPages, currentPage:
     let cancelled = false
     setLoadingPage(true)
     setPageImage(null)
+    setImgLoaded(false)
     setSelectedIdx(null)
     setEditingIdx(null)
 
@@ -222,15 +224,17 @@ export function OcrViewer({ docId, pages: initialPages, totalPages, currentPage:
                 onLoad={(e) => {
                   const img = e.currentTarget
                   setImgNatural({ w: img.naturalWidth, h: img.naturalHeight })
+                  setImgLoaded(true)
                 }}
                 className="block w-full h-auto"
                 draggable={false}
               />
 
-              {showBoxes && imgRef.current && blocks.map((box, i) => {
+              {showBoxes && imgLoaded && pageW > 1 && imgRef.current && blocks.map((box, i) => {
                 const [x1, y1, x2, y2] = box.bbox ?? [0, 0, 0, 0]
-                const dw = imgRef.current!.clientWidth
-                const dh = imgRef.current!.clientHeight
+                // Use display width as the single scale source — image is w-full h-auto so
+                // both axes share the same scale factor. Never reads clientHeight.
+                const scale = imgRef.current!.clientWidth / pageW
                 const color = getColor(box.category)
                 const isActive = selectedIdx === i || hoveredIdx === i
 
@@ -239,10 +243,10 @@ export function OcrViewer({ docId, pages: initialPages, totalPages, currentPage:
                     key={i}
                     className="absolute transition-all duration-75"
                     style={{
-                      left: `${x1 * dw / pageW}px`,
-                      top: `${y1 * dh / pageH}px`,
-                      width: `${(x2 - x1) * dw / pageW}px`,
-                      height: `${(y2 - y1) * dh / pageH}px`,
+                      left: `${x1 * scale}px`,
+                      top: `${y1 * scale}px`,
+                      width: `${(x2 - x1) * scale}px`,
+                      height: `${(y2 - y1) * scale}px`,
                       backgroundColor: isActive ? color.bg.replace(/[\d.]+\)$/, "0.3)") : color.bg,
                       border: `${selectedIdx === i ? 2 : 1.5}px solid ${isActive ? color.label : color.border}`,
                       cursor: "pointer",

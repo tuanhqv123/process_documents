@@ -11,47 +11,25 @@ import soundfile as sf
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# insanely-fast-whisper style: large-v3-turbo on MPS with batched decoding
-MODEL_NAME = os.getenv("WHISPER_MODEL", "openai/whisper-medium.en")
-BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "4"))
+MODEL_NAME = os.getenv("WHISPER_MODEL", "mlx-community/whisper-large-v3-turbo")
 
-_pipe = None
+_model_loaded = False
 
 
 def load_model():
-    global _pipe
-    if _pipe is not None:
+    global _model_loaded
+    if _model_loaded:
         return
-
     try:
-        import torch
-        from transformers import pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor
-
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        torch_dtype = torch.float16 if device == "mps" else torch.float32
-
-        logger.info(f"Loading {MODEL_NAME} on {device} (insanely-fast-whisper style)")
-
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
+        import mlx_whisper
+        logger.info(f"Loading MLX whisper model: {MODEL_NAME}")
+        mlx_whisper.transcribe(
+            np.zeros(16000, dtype=np.float32),
+            path_or_hf_repo=MODEL_NAME,
+            language="en",
         )
-        model.to(device)
-
-        processor = AutoProcessor.from_pretrained(MODEL_NAME)
-
-        _pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            torch_dtype=torch_dtype,
-            device=device,
-            model_kwargs={"attn_implementation": "sdpa"},
-        )
-
-        logger.info(f"Model loaded: {MODEL_NAME} on {device}, batch_size={BATCH_SIZE}")
+        _model_loaded = True
+        logger.info("MLX whisper model loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load whisper model: {e}")
 
@@ -62,7 +40,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Whisper Service", lifespan=lifespan)
+app = FastAPI(title="Whisper Service (MLX)", lifespan=lifespan)
 
 
 class TranscribeResponse(BaseModel):
@@ -74,8 +52,7 @@ def health():
     return {
         "status": "ok",
         "model": MODEL_NAME,
-        "backend": "insanely-fast-whisper (transformers+mps)",
-        "batch_size": BATCH_SIZE,
+        "backend": "mlx",
     }
 
 
@@ -85,24 +62,22 @@ def is_silent(audio: np.ndarray) -> bool:
 
 
 def transcribe_audio(audio: np.ndarray, sample_rate: int) -> str:
-    global _pipe
-    if _pipe is None:
+    if not _model_loaded:
         return "Model not loaded"
 
     try:
         if is_silent(audio):
             return ""
 
-        # .en models don't accept language/task args
-        gen_kwargs = {}
-        if not MODEL_NAME.endswith(".en"):
-            gen_kwargs = {"language": "en", "task": "transcribe"}
-
-        result = _pipe(
+        import mlx_whisper
+        result = mlx_whisper.transcribe(
             audio,
-            batch_size=BATCH_SIZE,
-            return_timestamps=False,
-            generate_kwargs=gen_kwargs,
+            path_or_hf_repo=MODEL_NAME,
+            language="en",
+            task="transcribe",
+            no_speech_threshold=0.6,
+            hallucination_silence_threshold=2.0,
+            condition_on_previous_text=False,
         )
         return result.get("text", "").strip()
     except Exception as e:

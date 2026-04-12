@@ -172,5 +172,9 @@ export const api = {
       ),
     summarize: (id: number) =>
       request<RecordingSession>(`/api/sessions/${id}/summarize`, { method: "POST" }),
+    transcripts: (id: number, after?: string) =>
+      request<{ id: number; device_id: string; text: string; timestamp: string }[]>(
+        `/api/sessions/${id}/transcripts${after ? `?after=${encodeURIComponent(after)}` : ""}`
+      ),
   },
 }

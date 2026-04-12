@@ -2,7 +2,6 @@
 
 import json
 import logging
-import threading
 from datetime import datetime
 
 from sqlalchemy import text as sql_text
@@ -48,42 +47,35 @@ def save_session_transcript(session_id: int, device_id: str, content: str) -> No
         db.close()
 
 
-# ── 10-second batch aggregator ────────────────────────────────────────────────
+# ── Batch aggregator: every 5 transcripts → RAG block ────────────────────────
 
-_batch_timers: dict[int, threading.Timer] = {}
-_timer_lock = threading.Lock()
-BATCH_SECONDS = 10
+BATCH_SIZE = 5
 
 
-def schedule_batch(session_id: int) -> None:
-    """Cancel any existing timer and schedule a fresh 10-s countdown.
-
-    Called every time a transcript arrives. After BATCH_SECONDS of silence
-    the timer fires and flushes pending transcripts into a RAG block.
-    """
-    with _timer_lock:
-        existing = _batch_timers.get(session_id)
-        if existing:
-            existing.cancel()
-        t = threading.Timer(BATCH_SECONDS, _flush_batch, args=[session_id])
-        t.daemon = True
-        t.start()
-        _batch_timers[session_id] = t
+def check_and_flush(session_id: int) -> None:
+    """Flush if we have BATCH_SIZE or more pending transcripts."""
+    db = get_session()
+    try:
+        pending_count = db.execute(
+            sql_text(
+                "SELECT COUNT(*) FROM session_transcripts "
+                "WHERE session_id = :sid AND block_id IS NULL"
+            ),
+            {"sid": session_id},
+        ).scalar()
+        if pending_count >= BATCH_SIZE:
+            _flush_batch(session_id)
+    finally:
+        db.close()
 
 
 def cancel_batch(session_id: int) -> None:
-    """Cancel the pending timer and immediately flush (called on session stop)."""
-    with _timer_lock:
-        existing = _batch_timers.pop(session_id, None)
-        if existing:
-            existing.cancel()
+    """Flush any remaining transcripts (called on session stop)."""
     _flush_batch(session_id)
 
 
 def _flush_batch(session_id: int) -> None:
     """Collect unblocked transcripts, run RAG on combined text, create a SessionRagBlock."""
-    with _timer_lock:
-        _batch_timers.pop(session_id, None)
     db = get_session()
     try:
         session = db.query(RecordingSession).filter(
@@ -144,10 +136,12 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
     from api.embedding_client import embedding_client
 
     try:
-        q_emb = embedding_client.embed_single(query)
+        q_emb = embedding_client.embed_query(query)
     except Exception as e:
         logger.warning(f"Embedding unavailable: {e}")
         return []
+
+    MIN_SCORE = 0.65  # balanced relevance threshold
 
     rows = db.execute(
         sql_text("""
@@ -163,11 +157,12 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
             WHERE wd.workspace_id = :ws_id
               AND n.node_rank = 3
               AND n.embedding IS NOT NULL
-              AND n.text != ''
+              AND LENGTH(n.text) >= 60
+              AND (1 - (n.embedding <=> CAST(:qemb AS vector))) >= :min_score
             ORDER BY n.embedding <=> CAST(:qemb AS vector)
-            LIMIT 5
+            LIMIT 3
         """),
-        {"qemb": str(q_emb), "ws_id": workspace_id},
+        {"qemb": str(q_emb), "ws_id": workspace_id, "min_score": MIN_SCORE},
     ).fetchall()
 
     results = []
@@ -265,19 +260,15 @@ def generate_session_summary(session_id: int) -> str:
 
 
 def fire_session_rag_hook(device_id: str, content: str) -> None:
-    """Call from any transcript-producing code path.
-
-    Looks up the active session, saves the transcript, and schedules the
-    10-second RAG batch. Runs in the calling thread — use run_in_executor
-    from async callers to avoid blocking the event loop.
-    Silently swallows all errors so a broken session never kills audio.
+    """Save transcript and flush RAG block every 5 sentences.
+    Runs in a thread — use run_in_executor from async callers.
     """
     try:
         session_id = get_active_session_id()
         if not session_id:
             return
         save_session_transcript(session_id, device_id, content)
-        schedule_batch(session_id)
+        check_and_flush(session_id)
     except Exception as e:
         logger.warning(f"fire_session_rag_hook error: {e}")
 

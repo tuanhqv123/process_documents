@@ -125,6 +125,7 @@ class DocumentNode(Base):
     # OCR layout fields
     category = Column(String, nullable=False)      # Title, Section-header, Text, Table, Picture …
     text = Column(Text, default="")
+    plain_text = Column(Text, default="")          # clean plain-text version for embedding
     page_num = Column(Integer, default=0)          # 1-based page number
     bbox = Column(ARRAY(Float), nullable=True)     # [x1, y1, x2, y2]
     position = Column(Integer, default=0)          # reading order index within parent
@@ -239,6 +240,10 @@ def init_db():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_document_nodes_path "
             "ON document_nodes USING GIST (CAST(path AS ltree))"
+        ))
+        # Add plain_text column if it doesn't exist yet (idempotent migration)
+        conn.execute(text(
+            "ALTER TABLE document_nodes ADD COLUMN IF NOT EXISTS plain_text TEXT DEFAULT ''"
         ))
         conn.commit()
 

@@ -1,7 +1,10 @@
 import os
 import json
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import redis
+
+TZ_VN = timezone(timedelta(hours=7))
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
@@ -22,7 +25,7 @@ def save_audio_level(device_id: str, amplitude: float, peak: float = 0.0):
     r = get_redis()
     key = f"{AUDIO_KEY_PREFIX}{device_id}"
     data = {
-        "time": __import__("datetime").datetime.now().isoformat(),
+        "time": datetime.now(TZ_VN).isoformat(),
         "device_id": device_id,
         "amplitude": amplitude,
         "peak": peak,
@@ -39,16 +42,21 @@ def get_recent_audio(device_id: str, limit: int = 100) -> list[dict]:
     return [json.loads(item) for item in items]
 
 
-def save_transcript(device_id: str, text: str):
+def save_transcript(device_id: str, text: str) -> bool:
+    """Save transcript to Redis. Returns False and skips if text is garbage."""
+    from api.whisper_client import is_garbage
+    if is_garbage(text):
+        return False
     r = get_redis()
     data = {
-        "time": __import__("datetime").datetime.now().isoformat(),
+        "time": datetime.now(TZ_VN).isoformat(),
         "device_id": device_id,
         "text": text,
     }
     r.lpush(TRANSCRIPT_KEY, json.dumps(data))
     r.ltrim(TRANSCRIPT_KEY, 0, 99)
     r.expire(TRANSCRIPT_KEY, 3600)
+    return True
 
 
 def get_transcripts(limit: int = 50) -> list[dict]:

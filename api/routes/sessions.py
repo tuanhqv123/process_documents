@@ -231,6 +231,35 @@ def poll_blocks(
     return [_block_out(b, db) for b in blocks]
 
 
+@router.get("/{session_id}/transcripts", response_model=list[TranscriptLineOut])
+def get_live_transcripts(
+    session_id: int,
+    after: Optional[str] = None,
+    db=Depends(get_db),
+):
+    """Return individual transcripts (including those not yet in a RAG block).
+    If `after` is given (ISO timestamp), return only newer ones."""
+    q = db.query(SessionTranscript).filter(
+        SessionTranscript.session_id == session_id
+    )
+    if after:
+        try:
+            after_dt = datetime.fromisoformat(after)
+            q = q.filter(SessionTranscript.created_at > after_dt)
+        except ValueError:
+            pass
+    rows = q.order_by(SessionTranscript.created_at).all()
+    return [
+        TranscriptLineOut(
+            id=t.id,
+            device_id=t.device_id,
+            text=t.text,
+            timestamp=t.created_at.isoformat(),
+        )
+        for t in rows
+    ]
+
+
 @router.post("/{session_id}/summarize", response_model=SessionOut)
 def summarize_session(session_id: int, db=Depends(get_db)):
     """Re-run LLM summary synchronously (idempotent)."""

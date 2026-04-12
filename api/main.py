@@ -3,6 +3,7 @@
 import asyncio
 import struct
 import math
+import time as _time
 from datetime import datetime, timezone, timedelta
 
 TZ_VN = timezone(timedelta(hours=7))
@@ -29,8 +30,32 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# ── WebRTC NS: single-pass level 3, inline (~0.3ms per packet) ──
+from webrtc_noise_gain import AudioProcessor
+_ns = AudioProcessor(0, 3)
+_ns_buf = bytearray()
+_FRAME = 320  # 10ms at 16kHz
+_SILENCE = b"\x00" * _FRAME
+_hold = 0
+
+
+def _clean_pcm(raw: bytes) -> bytes:
+    global _ns_buf, _hold
+    _ns_buf.extend(raw)
+    out = bytearray()
+    while len(_ns_buf) >= _FRAME:
+        frame = bytes(_ns_buf[:_FRAME])
+        _ns_buf = _ns_buf[_FRAME:]
+        r = _ns.Process10ms(frame)
+        if r.is_speech:
+            _hold = 15
+        elif _hold > 0:
+            _hold -= 1
+        out.extend(r.audio if _hold > 0 else _SILENCE)
+    return bytes(out)
+
+
 def compute_audio_levels(raw_bytes: bytes) -> tuple[float, float]:
-    """Extract amplitude (RMS) and peak from raw 16-bit PCM audio bytes."""
     if len(raw_bytes) < 2:
         return 0.0, 0.0
     n_samples = len(raw_bytes) // 2
@@ -39,25 +64,79 @@ def compute_audio_levels(raw_bytes: bytes) -> tuple[float, float]:
     rms = math.sqrt(sum(s * s for s in samples) / n_samples) / 32768.0
     return round(rms, 6), round(peak, 6)
 
-IMAGES_DIR = Path("data/images")
 
+IMAGES_DIR = Path("data/images")
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _get_lan_ip() -> str:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
+def _start_mdns():
+    import subprocess
+    ip = _get_lan_ip()
+    try:
+        proc = subprocess.Popen(
+            ["dns-sd", "-P", "process-docs", "_http._tcp", "local", "8000",
+             "process-docs.local", ip],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"mDNS: process-docs.local → {ip}:8000")
+        return proc
+    except Exception:
+        return None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+    loop = asyncio.get_event_loop()
+    mdns_proc = await loop.run_in_executor(None, _start_mdns)
     yield
+    if mdns_proc:
+        mdns_proc.terminate()
 
 
 app = FastAPI(title="Knowledge Base API", lifespan=lifespan)
 
+# Browser audio monitor clients
+_audio_monitor_clients: set[WebSocket] = set()
+
+
+async def _broadcast_pcm(data: bytes) -> None:
+    dead = set()
+    for ws in _audio_monitor_clients:
+        try:
+            await ws.send_bytes(data)
+        except Exception:
+            dead.add(ws)
+    _audio_monitor_clients.difference_update(dead)
+
+
+@app.websocket("/ws/audio-monitor")
+async def audio_monitor_ws(websocket: WebSocket):
+    await websocket.accept()
+    _audio_monitor_clients.add(websocket)
+    try:
+        while True:
+            await websocket.receive()
+    except Exception:
+        pass
+    finally:
+        _audio_monitor_clients.discard(websocket)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
 app.mount("/static/images", StaticFiles(directory=str(IMAGES_DIR), html=False), name="images")
@@ -73,80 +152,90 @@ app.include_router(api_keys_router)
 app.include_router(sessions_router)
 
 
+async def _transcribe_bg(device_id: str, chunk: bytes):
+    try:
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(None, whisper_client.transcribe, chunk)
+        if text:
+            save_transcript(device_id, text)
+            await manager.publish_sse("transcript", {
+                "device_id": device_id,
+                "text": text,
+                "time": datetime.now(TZ_VN).isoformat(),
+            })
+            logger.info(f"Transcript: {text}")
+            from api.services.session_service import fire_session_rag_hook
+            loop.run_in_executor(None, fire_session_rag_hook, device_id, text)
+    except Exception as e:
+        logger.error(f"Transcribe error: {e}")
+
+
 @app.websocket("/ws")
 async def websocket_root(websocket: WebSocket):
     await websocket.accept()
-    print("="*50)
-    print("ESP32 WebSocket CONNECTED - STARTING LOOP")
-    print("="*50)
-    logger.info("=== ESP32 WebSocket connected ===")
-    await websocket.send_text("ACK: connected")
+    logger.info("ESP32 connected")
+    try:
+        await websocket.send_text("ACK: connected")
+    except Exception:
+        return
+
     audio_buffer = bytearray()
+    device_id = "esp32-001"
+    amp_acc: list[float] = []
+    peak_acc: list[float] = []
+    last_sse = _time.monotonic()
+
     try:
         while True:
             msg = await websocket.receive()
-            msg_type = msg.get("type", "")
-            
-            if "bytes" in msg:
-                audio_data = msg["bytes"]
-                device_id = "esp32-001"
-                logger.info(f"WS binary: {len(audio_data)} bytes")
 
-                # Always compute and publish audio levels from raw PCM
-                amplitude, peak = compute_audio_levels(audio_data)
-                save_audio_level(device_id, amplitude, peak)
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            if "bytes" not in msg:
+                continue
+
+            audio_data = msg["bytes"]
+
+            # 1) Amplitude (cheap math)
+            amplitude, peak = compute_audio_levels(audio_data)
+            amp_acc.append(amplitude)
+            peak_acc.append(peak)
+
+            # 2) SSE every ~1s for chart
+            now = _time.monotonic()
+            if now - last_sse >= 1.0 and amp_acc:
+                avg_amp = sum(amp_acc) / len(amp_acc)
+                avg_peak = max(peak_acc)
+                amp_acc.clear()
+                peak_acc.clear()
+                last_sse = now
+                save_audio_level(device_id, avg_amp, avg_peak)
                 await manager.publish_sse("audio", {
                     "device_id": device_id,
-                    "amplitude": amplitude,
-                    "peak": peak,
+                    "amplitude": round(avg_amp, 6),
+                    "peak": round(avg_peak, 6),
                     "time": datetime.now(TZ_VN).isoformat(),
                 })
 
-                # Accumulate audio for whisper transcription
-                audio_buffer.extend(audio_data)
-                # Transcribe every ~2 seconds of audio (16kHz, 16-bit mono = 32000 bytes/sec)
-                if len(audio_buffer) >= 64000:
-                    chunk = bytes(audio_buffer)
-                    audio_buffer.clear()
-                    try:
-                        text = whisper_client.transcribe(chunk)
-                        if text:
-                            save_transcript(device_id, text)
-                            await manager.publish_sse("transcript", {
-                                "device_id": device_id,
-                                "text": text,
-                                "time": datetime.now(TZ_VN).isoformat(),
-                            })
-                            logger.info(f"Transcript: {text}")
-                            # Session RAG hook
-                            from api.services.session_service import fire_session_rag_hook
-                            import asyncio as _asyncio
-                            _asyncio.get_event_loop().run_in_executor(
-                                None, fire_session_rag_hook, device_id, text
-                            )
-                    except Exception as e:
-                        logger.error(f"Transcribe error: {e}")
+            # 3) Denoise + forward to browser audio
+            clean = _clean_pcm(audio_data)
+            if _audio_monitor_clients and clean:
+                asyncio.create_task(_broadcast_pcm(clean))
 
-            elif msg_type == "text" or ("text" in msg and msg.get("text")):
-                data = msg.get("text", "")
-                try:
-                    payload = json.loads(data)
-                    device_id = payload.get("device_id", "esp32-001")
-                    amplitude = payload.get("amplitude", 0)
-                    peak = payload.get("peak", 0)
-                    save_audio_level(device_id, amplitude, peak)
-                    await manager.publish_sse("audio", {
-                        "device_id": device_id,
-                        "amplitude": amplitude,
-                        "peak": peak,
-                        "time": datetime.now(TZ_VN).isoformat(),
-                    })
-                except:
-                    pass
-    except WebSocketDisconnect:
-        logger.info("ESP32 WebSocket disconnected")
+            # 4) Whisper every ~2s (uses raw audio — whisper handles noise itself)
+            audio_buffer.extend(audio_data)
+            if len(audio_buffer) >= 64000:
+                chunk = bytes(audio_buffer)
+                audio_buffer.clear()
+                asyncio.create_task(_transcribe_bg(device_id, chunk))
+
+    except (WebSocketDisconnect, RuntimeError):
+        pass
     except Exception as e:
-        logger.error(f"WS error: {e}")
+        logger.info(f"ESP32 WS closed: {type(e).__name__}")
+    finally:
+        logger.info("ESP32 disconnected")
 
 
 @app.get("/api/health")
