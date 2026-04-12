@@ -11,7 +11,7 @@ A local-first knowledge base that lets you upload documents (PDF, PPTX), extract
 │                        Browser (React + Vite)                    │
 │  Dataset │ Workspaces │ Real-time Monitor │ Sessions │ Settings  │
 └──────────────────────┬──────────────────────────────────────────┘
-                       │ HTTP / WebSocket
+                       │ HTTP / WebSocket / SSE
 ┌──────────────────────▼──────────────────────────────────────────┐
 │                   API Server  :8000  (FastAPI)                   │
 │                                                                  │
@@ -21,52 +21,181 @@ A local-first knowledge base that lets you upload documents (PDF, PPTX), extract
 │  /api/realtime   ── SSE audio levels + transcripts              │
 │  /api/api-keys   ── manage OCR / LLM keys                       │
 │  /ws             ── WebSocket for ESP32 raw PCM audio           │
+│  /ws/audio-monitor── WebSocket broadcast to browser waveform    │
 └──────┬───────────┬────────────────┬──────────────────┬──────────┘
        │           │                │                  │
-┌──────▼──┐  ┌─────▼──────┐  ┌─────▼─────┐  ┌────────▼────────┐
-│Embedder │  │  Whisper   │  │PostgreSQL │  │  OCR / LLM      │
-│ :8001   │  │  MLX :8002 │  │+ pgvector │  │  (vLLM/remote)  │
-│MLX BGE  │  │large-v3-   │  │  ltree    │  │  dots.ocr model │
-│small    │  │turbo       │  │           │  │                 │
-└─────────┘  └────────────┘  └───────────┘  └─────────────────┘
-                                    ▲
-                            ┌───────┴───────┐
-                            │  ESP32 Device │
-                            │  (mic + WiFi) │
-                            └───────────────┘
+┌──────▼──┐  ┌─────▼──────┐  ┌─────▼─────────┐  ┌────▼────────────┐
+│Embedder │  │  Whisper   │  │  PostgreSQL   │  │  OCR / LLM      │
+│ :8001   │  │   :8002    │  │  + pgvector   │  │  (vLLM/remote)  │
+│MLX BGE  │  │MLX or      │  │  + ltree      │  │  dots.ocr model │
+│small    │  │Transformers│  │               │  │                 │
+└─────────┘  └────────────┘  └───────────────┘  └─────────────────┘
+                                      ▲
+                              ┌───────┴───────┐
+                              │  ESP32 Device │
+                              │  INMP441 mic  │
+                              │  WiFi → WS   │
+                              └───────────────┘
 ```
 
-### Document pipeline
+---
+
+## Pipelines
+
+### 1. Document ingestion pipeline
 
 ```
-Upload PDF/PPTX
-    → Render pages to PNG (pypdfium2 / python-pptx)
-    → Send each page image to dots.ocr (vLLM)
-    → Parse layout JSON: Title / Section-header / Text / Table / Picture / Formula
-    → Caption Picture blocks via LLM (optional)
-    → Save OCR JSON + page PNGs
-    → Train: build hierarchical DocumentNode tree
-         Document → Title → Section-header → Leaf (Text/Table/Picture…)
-    → Embed each leaf node with ancestor context (MLX BGE)
-    → Store vectors in PostgreSQL (pgvector)
+Upload PDF / PPTX
+  │
+  ├─ PDF  → pypdfium2 renders each page to PNG at 2x resolution
+  └─ PPTX → python-pptx converts each slide to PNG
+  │
+  ▼
+OCR (Extract)
+  │  Each page PNG → HTTP POST → dots.ocr model (vLLM, OpenAI-compatible)
+  │  Response: layout JSON with blocks per page
+  │
+  │  Block categories returned:
+  │    Title, Section-header, Text, Table (HTML), Picture, Formula, Caption
+  │
+  └─ Page PNGs + OCR JSON saved to disk
+  │
+  ▼
+Train (Knowledge Graph)
+  │
+  │  Build hierarchical DocumentNode tree in PostgreSQL (ltree paths):
+  │
+  │    Document (rank 0)
+  │      └─ Title (rank 1)
+  │           └─ Section-header (rank 2)
+  │                └─ Text / Table / Picture / Formula  (rank 3, leaf)
+  │
+  │  Each leaf node stores:
+  │    - text content (or caption for images)
+  │    - category, page_num, bbox [x1,y1,x2,y2]
+  │    - ltree path (e.g. doc_5.node_2.node_8.node_14)
+  │
+  ▼
+Embed
+  │  For each leaf node:
+  │    context = ancestor Title + Section-header texts joined
+  │    input   = "[context] text"
+  │    → POST /embed → Embedder service (MLX BGE small-en-v1.5)
+  │    → 384-dim float32 vector stored in document_nodes.embedding (pgvector)
+  │
+  └─ Document status → "ready"
 ```
 
-### Live session RAG pipeline
+---
+
+### 2. Live session RAG pipeline
 
 ```
-ESP32 mic → raw PCM (WebSocket /ws)
-    → WebRTC NS denoising (server-side, level 3)
-    → Amplitude → SSE to browser (wave chart)
-    → Whisper MLX → transcript text
-    → fire_session_rag_hook()
-        → save SessionTranscript row
-        → every 5 transcripts: flush batch
-            → embed combined text (BGE)
-            → vector search workspace document nodes (pgvector)
-            → save SessionRagBlock (transcripts + top-3 matches)
-    → browser polls /api/sessions/{id}/transcripts + /blocks every 2s
-    → Stop → LLM generates session summary
+ESP32 (INMP441 mic)
+  │  I2S 32-bit samples → 16-bit PCM with ~8x gain
+  │  512 samples (32ms) per WebSocket binary frame
+  │  Connects to ws://process-docs.local:8000/ws  (mDNS resolved)
+  │
+  ▼
+API Server /ws endpoint
+  │
+  ├─ 1. Amplitude measurement (every incoming frame)
+  │       compute RMS + peak from raw PCM
+  │       accumulate for 1 second → average
+  │       → SSE event "audio" to browser (wave chart on Real-time Monitor)
+  │
+  ├─ 2. Noise suppression (every incoming frame)
+  │       WebRTC AudioProcessor — single-pass, level 3 aggressiveness
+  │       10ms frame size = 320 bytes at 16kHz
+  │       Voice activity detection: is_speech flag
+  │       Hold logic: 15 frames of audio kept after speech ends (avoids cutoff)
+  │       Non-speech frames → replaced with silence
+  │       Clean PCM → broadcast to /ws/audio-monitor (browser waveform preview)
+  │
+  └─ 3. Whisper transcription (every ~2 seconds of buffered audio)
+           64,000 bytes = 2 seconds of 16kHz 16-bit PCM
+           → run_in_executor (thread) → POST /transcribe → Whisper service
+           Whisper receives raw audio (handles its own noise model internally)
+           Returns: transcript text string
+           │
+           ▼
+        fire_session_rag_hook(device_id, text)
+           │
+           ├─ Look up active recording session (status = 'active')
+           ├─ INSERT SessionTranscript row (block_id = NULL initially)
+           │
+           └─ check_and_flush: count unblocked transcripts for this session
+                if count >= 5:
+                  _flush_batch()
+                    │
+                    ├─ Collect all pending transcripts (ordered by time)
+                    ├─ combined_text = join all transcript texts
+                    │
+                    ├─ Embed: POST /embed → 384-dim vector for combined_text
+                    │
+                    ├─ pgvector search in workspace document_nodes:
+                    │     SELECT leaf nodes WHERE cosine similarity >= 0.65
+                    │     JOIN workspace_docs to scope to the session's workspace
+                    │     ORDER BY distance, LIMIT 3
+                    │     For each result: walk ltree upward to get Title > Section breadcrumb
+                    │
+                    ├─ INSERT SessionRagBlock:
+                    │     block_start / block_end timestamps
+                    │     combined_text
+                    │     rag_results (JSON: id, doc_id, filename, text, category,
+                    │                        page_num, bbox, score, context breadcrumb)
+                    │
+                    └─ UPDATE transcripts.block_id = new block id
+
+  Browser polls every 2s:
+    GET /api/sessions/{id}/transcripts?after=<timestamp>  → live transcript feed
+    GET /api/sessions/{id}/blocks?after=<timestamp>       → new RAG blocks
+
+  On Stop:
+    Flush any remaining unblocked transcripts
+    Session status → "stopped"
+    Background thread: generate_session_summary()
+      → build prompt from all RAG blocks + matched document sections
+      → POST to configured LLM (OpenAI-compatible, any model)
+      → store summary in recording_sessions.summary
 ```
+
+---
+
+### 3. Database schema (key tables)
+
+```
+documents              — uploaded files (filename, status, page_count)
+document_nodes         — OCR layout tree (ltree path, category, text, bbox, embedding vector)
+workspaces             — named groups of documents
+workspace_docs         — many-to-many: workspace ↔ document
+recording_sessions     — name, status (idle/active/stopped), workspace_id, summary
+session_transcripts    — individual Whisper outputs (session_id, text, created_at, block_id)
+session_rag_blocks     — 5-transcript batches with RAG results JSON
+api_keys               — OCR / LLM endpoint config (base_url, model_name, api_key)
+```
+
+**Extensions required:**
+- `pgvector` — cosine similarity search on 384-dim embeddings
+- `ltree` — hierarchical path queries for document node tree traversal
+
+---
+
+### 4. mDNS — how the ESP32 finds the server
+
+```
+API starts
+  └─ subprocess: dns-sd -P process-docs _http._tcp local 8000 process-docs.local <LAN-IP>
+       Bonjour registers the service name on the local network
+
+ESP32 boots
+  └─ MDNS.queryHost("process-docs", 2000ms timeout, up to 20 retries)
+       Resolves hostname → LAN IP
+  └─ webSocket.begin(resolvedIP, 8000, "/ws")
+       Connects with the IP directly (no DNS dependency at runtime)
+```
+
+The server's LAN IP is detected automatically at startup via a UDP socket probe to `8.8.8.8` (no packet is sent — just reads the local interface). If mDNS fails on your router, hardcode the IP in the ESP32 firmware instead.
 
 ---
 
