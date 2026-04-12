@@ -285,7 +285,7 @@ In your ESP32 firmware `config.h`, you can use the hostname instead of IP:
 
 The ESP32 streams **16 kHz mono PCM** audio over WebSocket to `ws://<mac-ip>:8000/ws`.
 
-Firmware repo: **https://github.com/tuanhqv123/esp32-audio-stream**
+Firmware repo: **https://github.com/tuanhqv123/NLP**
 
 ### Setup steps
 
