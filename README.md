@@ -229,6 +229,58 @@ curl http://localhost:8002/health
 
 ---
 
+## mDNS — Auto-discovery on Local Network
+
+The API server automatically registers itself as **`process-docs.local`** on your local network using macOS Bonjour (`dns-sd`) when it starts. This means the ESP32 can connect by hostname instead of a hardcoded IP address.
+
+```
+API starts → dns-sd registers process-docs.local → port 8000
+ESP32 connects to ws://process-docs.local:8000/ws
+```
+
+### How it works
+
+On startup, `api/main.py` runs:
+
+```bash
+dns-sd -P process-docs _http._tcp local 8000 process-docs.local <your-lan-ip>
+```
+
+This broadcasts the service over mDNS so any device on the same WiFi network can resolve `process-docs.local`.
+
+### Verify it works
+
+From another device on the same network (or the Mac itself):
+
+```bash
+ping process-docs.local
+# or
+curl http://process-docs.local:8000/api/health
+```
+
+### Requirements
+
+- macOS only (`dns-sd` is built into macOS via Bonjour — no extra install needed)
+- Both the Mac and ESP32 must be on the **same WiFi network**
+- If your router blocks mDNS between devices, use the Mac's IP address directly instead
+
+### ESP32 firmware — use mDNS hostname
+
+In your ESP32 firmware `config.h`, you can use the hostname instead of IP:
+
+```cpp
+#define WS_HOST  "process-docs.local"   // works via mDNS
+#define WS_PORT  8000
+#define WS_PATH  "/ws"
+```
+
+> If mDNS doesn't resolve on your network, fall back to the Mac's LAN IP:
+> ```bash
+> ipconfig getifaddr en0
+> ```
+
+---
+
 ## ESP32 Firmware
 
 The ESP32 streams **16 kHz mono PCM** audio over WebSocket to `ws://<mac-ip>:8000/ws`.
