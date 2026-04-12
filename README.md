@@ -191,12 +191,15 @@ source venv/bin/activate
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Terminal 2 — Whisper MLX (port 8002)
+### Terminal 2 — Whisper (port 8002)
+
+Two backends available — pick one:
+
+**Option A — MLX (Apple Silicon, recommended on macOS)**
 
 ```bash
 source venv/bin/activate
-# First time only:
-pip install mlx-whisper
+pip install mlx-whisper   # first time only
 
 WHISPER_MODEL=mlx-community/whisper-large-v3-turbo \
 uvicorn whisper.main_mlx:app --host 0.0.0.0 --port 8002 --reload
@@ -204,11 +207,27 @@ uvicorn whisper.main_mlx:app --host 0.0.0.0 --port 8002 --reload
 
 First run downloads the model (~800 MB, cached after that).
 
-### Terminal 3 — Embedder MLX (port 8001)
+**Option B — HuggingFace Transformers (Linux / cross-platform)**
+
+```bash
+source venv/bin/activate
+pip install torch transformers accelerate   # first time only
+
+WHISPER_MODEL=openai/whisper-medium.en \
+uvicorn whisper.main:app --host 0.0.0.0 --port 8002 --reload
+```
+
+Both options expose the same HTTP API on port 8002, so the rest of the stack works unchanged.
+
+### Terminal 3 — Embedder (port 8001)
+
+The default embedder uses **MLX BGE** (Apple Silicon):
 
 ```bash
 ./start-embedder.sh
 ```
+
+> **Linux / other platforms:** the embedder currently requires MLX. A cross-platform version using `sentence-transformers` is not yet included — contributions welcome.
 
 ### Terminal 4 — Frontend (port 5173)
 
@@ -385,8 +404,8 @@ process_documents/
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, SQLAlchemy 2, PostgreSQL + pgvector + ltree |
 | OCR | rednote-hilab/dots.ocr via vLLM (OpenAI-compatible API) |
-| Embedding | MLX BGE small-en-v1.5-4bit (Apple Silicon) |
-| Speech-to-Text | MLX Whisper large-v3-turbo (Apple Silicon) |
+| Embedding | MLX BGE small-en-v1.5-4bit (`embedder/main.py`, Apple Silicon) |
+| Speech-to-Text | MLX Whisper (`whisper/main_mlx.py`) or HuggingFace Transformers (`whisper/main.py`) |
 | Noise Suppression | webrtc-noise-gain level 3 (server-side) |
 | Document Rendering | pypdfium2 (PDF), python-pptx (PPTX) |
 | Knowledge Graph | PostgreSQL ltree — hierarchical node paths |
