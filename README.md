@@ -108,10 +108,10 @@ cd ..
 
 ### 4. Embedder
 
-The embedder uses a separate venv managed by `start-embedder.sh` — no manual setup needed.
-
 ```bash
-chmod +x start-embedder.sh
+python3 -m venv embedder_venv
+source embedder_venv/bin/activate
+pip install mlx>=0.20 mlx-embeddings>=0.1.0 fastapi "uvicorn[standard]" pydantic>=2.0
 ```
 
 ---
@@ -219,15 +219,20 @@ uvicorn whisper.main:app --host 0.0.0.0 --port 8002 --reload
 
 Both options expose the same HTTP API on port 8002, so the rest of the stack works unchanged.
 
-### Terminal 3 — Embedder (port 8001)
-
-The default embedder uses **MLX BGE** (Apple Silicon):
+### Terminal 3 — Embedder MLX (port 8001)
 
 ```bash
-./start-embedder.sh
+# First time only — create a separate venv for the embedder
+python3 -m venv embedder_venv
+source embedder_venv/bin/activate
+pip install mlx>=0.20 mlx-embeddings>=0.1.0 fastapi uvicorn[standard] pydantic>=2.0
+
+# Every time
+source embedder_venv/bin/activate
+uvicorn embedder.main:app --host 0.0.0.0 --port 8001
 ```
 
-> **Linux / other platforms:** the embedder currently requires MLX. A cross-platform version using `sentence-transformers` is not yet included — contributions welcome.
+> The embedder currently requires MLX (Apple Silicon). A cross-platform `sentence-transformers` version is not yet included.
 
 ### Terminal 4 — Frontend (port 5173)
 
@@ -392,7 +397,7 @@ process_documents/
 │       └── components/          # OcrViewer, UploadModal, AppSidebar…
 ├── .env.example
 ├── pyproject.toml
-└── start-embedder.sh
+└── embedder_venv/                # separate venv for the embedder (created on first setup)
 ```
 
 ---
