@@ -41,7 +41,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/pdf_processor
       REDIS_URL: redis://redis:6379
       EMBEDDING_SERVICE_URL: http://host.docker.internal:8001
-      WHISPER_SERVICE_URL: http://host.docker.internal:8002
+      WHISPER_SERVICE_URL: http://whisper:8002
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./api:/app/api
@@ -71,13 +71,15 @@ services:
       dockerfile: whisper/Dockerfile
     container_name: pdf-whisper
     volumes:
-      - ./whisper/main.py:/app/main.py
-      - whisper_cache:/root/.cache
+      - ./whisper/main_zipformer.py:/app/main.py
+      - ./models/zipformer:/models/zipformer
     ports:
       - "8002:8002"
+    environment:
+      ZIPFORMER_MODEL_DIR: /models/zipformer
+      NUM_THREADS: "4"
     command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 
 volumes:
   postgres_data:
-  whisper_cache:
   frontend_node_modules:

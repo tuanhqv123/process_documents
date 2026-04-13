@@ -44,3 +44,4 @@ venv/
 
 # OpenCode
 .opencode/
+models/zipformer/

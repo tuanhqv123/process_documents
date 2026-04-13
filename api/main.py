@@ -30,28 +30,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ── WebRTC NS: single-pass level 3, inline (~0.3ms per packet) ──
+# ── WebRTC noise suppression + VAD ────
 from webrtc_noise_gain import AudioProcessor
-_ns = AudioProcessor(0, 3)
+_ns = AudioProcessor(10, 3)   # 10ms frame, noise suppression level 3
 _ns_buf = bytearray()
-_FRAME = 320  # 10ms at 16kHz
-_SILENCE = b"\x00" * _FRAME
-_hold = 0
+_FRAME  = 320                 # 10ms at 16kHz, int16
 
 
 def _clean_pcm(raw: bytes) -> bytes:
-    global _ns_buf, _hold
+    global _ns_buf
     _ns_buf.extend(raw)
     out = bytearray()
     while len(_ns_buf) >= _FRAME:
         frame = bytes(_ns_buf[:_FRAME])
         _ns_buf = _ns_buf[_FRAME:]
-        r = _ns.Process10ms(frame)
-        if r.is_speech:
-            _hold = 15
-        elif _hold > 0:
-            _hold -= 1
-        out.extend(r.audio if _hold > 0 else _SILENCE)
+        result = _ns.Process10ms(frame)
+        out.extend(result.audio)
     return bytes(out)
 
 
@@ -80,28 +74,40 @@ def _get_lan_ip() -> str:
 
 
 def _start_mdns():
-    import subprocess
-    ip = _get_lan_ip()
+    """Register process-docs.local via zeroconf (stable, no subprocess)."""
+    import socket
+    from zeroconf import ServiceInfo, Zeroconf
+
+    ip  = _get_lan_ip()
+    zc  = Zeroconf()
+    info = ServiceInfo(
+        "_http._tcp.local.",
+        "process-docs._http._tcp.local.",
+        addresses=[socket.inet_aton(ip)],
+        port=8000,
+        properties={b"path": b"/ws"},
+        server="process-docs.local.",
+    )
+    zc.register_service(info)
+    logger.info(f"mDNS: process-docs.local → {ip}:8000  (zeroconf)")
+    return zc
+
+
+def _stop_mdns(zc):
     try:
-        proc = subprocess.Popen(
-            ["dns-sd", "-P", "process-docs", "_http._tcp", "local", "8000",
-             "process-docs.local", ip],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        logger.info(f"mDNS: process-docs.local → {ip}:8000")
-        return proc
+        zc.unregister_all_services()
+        zc.close()
     except Exception:
-        return None
+        pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
     loop = asyncio.get_event_loop()
-    mdns_proc = await loop.run_in_executor(None, _start_mdns)
+    zc = await loop.run_in_executor(None, _start_mdns)
     yield
-    if mdns_proc:
-        mdns_proc.terminate()
+    await loop.run_in_executor(None, _stop_mdns, zc)
 
 
 app = FastAPI(title="Knowledge Base API", lifespan=lifespan)
