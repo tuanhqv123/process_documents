@@ -39,7 +39,6 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onSelectSessions: () => void;
   onSelectSettings: () => void;
   onCreateWorkspace: () => void;
-  onCreateWorkspaceDialog?: (open: boolean) => void;
 }
 
 export function AppSidebar({

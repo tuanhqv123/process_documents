@@ -51,7 +51,7 @@ export function RealtimePage() {
 
   // Flush accumulated PCM as one AudioBuffer — browser resamples 16k→native natively
   const flushPcm = useCallback((ctx: AudioContext, chain: AudioNode) => {
-    const ACC = 4000; // 250ms @ 16kHz
+    const ACC = 1600; // 100ms @ 16kHz — small chunks = low latency
     if (pcmAccLen.current < ACC) return;
     const combined = new Int16Array(pcmAccLen.current);
     let off = 0;
@@ -70,7 +70,8 @@ export function RealtimePage() {
     src.connect(chain);
 
     const now = ctx.currentTime;
-    if (nextTimeRef.current < now + 0.2) nextTimeRef.current = now + 0.2;
+    // 50ms lookahead: enough to avoid glitches, small enough to feel real-time
+    if (nextTimeRef.current < now + 0.05) nextTimeRef.current = now + 0.05;
     src.start(nextTimeRef.current);
     nextTimeRef.current += buf.duration;
   }, []);
@@ -189,15 +190,12 @@ export function RealtimePage() {
 
     connect();
 
-    // Flush every 1s — matches server SSE publish rate.
-    // Each SSE event = 1 averaged data point, so just push directly.
+    // Flush every 500ms — push all buffered SSE points to chart
     const flushInterval = setInterval(() => {
       if (audioBuf.current.length === 0) return;
       const batch = audioBuf.current.splice(0);
-      // Take the latest SSE point (already averaged on server)
-      const last = batch[batch.length - 1];
-      setAudioData((prev) => [...prev, last].slice(-MAX_AUDIO_POINTS));
-    }, 1000);
+      setAudioData((prev) => [...prev, ...batch].slice(-MAX_AUDIO_POINTS));
+    }, 500);
 
     return () => {
       es?.close();

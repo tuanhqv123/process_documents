@@ -18,7 +18,7 @@ DATABASE_URL = os.getenv(
     "postgresql://postgres:postgres@localhost:5432/pdf_processor"
 )
 
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "384"))
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -66,7 +66,7 @@ class Chunk(Base):
     element_types = Column(Text, default="[]")
     html = Column(Text, default="")
     is_edited = Column(Boolean, default=False)
-    embedding = Column(Vector(384), nullable=True)
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
 
     document = relationship("Document", back_populates="chunks")
 

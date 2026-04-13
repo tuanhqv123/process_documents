@@ -73,10 +73,6 @@ class TranscribeResponse(BaseModel):
     text: str
 
 
-def is_silent(audio: np.ndarray, threshold: float = 0.005) -> bool:
-    return float(np.sqrt(np.mean(audio ** 2))) < threshold
-
-
 def transcribe(audio: np.ndarray) -> str:
     """Transcribe a complete audio array (float32, 16kHz mono)."""
     stream = _recognizer.create_stream()
@@ -121,10 +117,6 @@ async def transcribe_wav(request: Request):
             audio = audio.mean(axis=1)
 
         audio = audio.astype(np.float32)
-
-        if is_silent(audio):
-            return TranscribeResponse(text="")
-
         text = transcribe(audio)
         logger.info(f"Zipformer → {text!r}")
         return TranscribeResponse(text=text)

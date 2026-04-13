@@ -7,6 +7,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { api } from "@/api/client"
@@ -24,6 +28,7 @@ export function SessionsPage({ workspaces, onSelectSession }: SessionsPageProps)
   const [newName, setNewName] = useState("")
   const [newWsId, setNewWsId] = useState<string>("")
   const [creating, setCreating] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -52,14 +57,15 @@ export function SessionsPage({ workspaces, onSelectSession }: SessionsPageProps)
     }
   }
 
-  const handleDelete = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm("Delete this session and all its transcripts?")) return
+  const handleDeleteConfirm = async () => {
+    if (deleteTarget === null) return
     try {
-      await api.sessions.delete(id)
-      setSessions(prev => prev.filter(s => s.id !== id))
+      await api.sessions.delete(deleteTarget)
+      setSessions(prev => prev.filter(s => s.id !== deleteTarget))
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed")
+      console.error("Delete failed:", e)
+    } finally {
+      setDeleteTarget(null)
     }
   }
 
@@ -123,7 +129,7 @@ export function SessionsPage({ workspaces, onSelectSession }: SessionsPageProps)
                 </Button>
                 <Button size="sm" variant="ghost"
                   className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                  onClick={(e) => handleDelete(s.id, e)}>
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(s.id) }}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -131,6 +137,23 @@ export function SessionsPage({ workspaces, onSelectSession }: SessionsPageProps)
           ))}
         </div>
       )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the session and all its transcripts. Cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

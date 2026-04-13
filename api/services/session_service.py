@@ -241,6 +241,7 @@ def generate_session_summary(session_id: int) -> str:
             "1. What the user discussed and asked about\n"
             "2. Which document sections were most relevant\n"
             "3. Key insights from the session\n\n"
+            "IMPORTANT: Detect the language of the transcript above and write the entire summary in that same language.\n"
             "Use markdown with headers."
         )
     except Exception as e:
@@ -296,7 +297,8 @@ def _call_llm(prompt: str) -> str:
                 "role": "system",
                 "content": (
                     "You are a knowledgeable assistant summarizing a voice recording session. "
-                    "Be concise and structured. Use markdown."
+                    "Be concise and structured. Use markdown. "
+                    "Always respond in the same language as the transcript content."
                 ),
             },
             {"role": "user", "content": prompt},

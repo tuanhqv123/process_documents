@@ -1,5 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
 import { Database, FolderOpen, Activity, Wifi, Settings, Radio } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import {
   SidebarInset,
@@ -33,6 +42,9 @@ function AppContent() {
   );
   const [selectedSession, setSelectedSession] = useState<RecordingSession | null>(null)
   const [loading, setLoading] = useState(true);
+  const [showCreateWs, setShowCreateWs] = useState(false);
+  const [newWsName, setNewWsName] = useState("");
+  const [creatingWs, setCreatingWs] = useState(false);
 
   const isRealtime = location.pathname === "/monitor";
   const isDataset = location.pathname === "/dataset" || location.pathname.startsWith("/dataset/");
@@ -203,17 +215,8 @@ function AppContent() {
             onSelectRealtime={() => { setRealtimeKey(k => k + 1); navigate("/monitor"); }}
             onSelectSettings={() => navigate("/settings")}
             onSelectSessions={() => { setSelectedSession(null); navigate("/sessions"); }}
-            onCreateWorkspace={() => {
-              const name = prompt("Workspace name:");
-              if (name) handleCreateWorkspace(name, () => {});
-            }}
+            onCreateWorkspace={() => setShowCreateWs(true)}
             workspacesLoading={loading}
-            onCreateWorkspaceDialog={(open) => {
-              if (open) {
-                const name = prompt("Workspace name:");
-                if (name) handleCreateWorkspace(name, () => {});
-              }
-            }}
           />
 
           <SidebarInset className="min-h-0 overflow-hidden">
@@ -319,6 +322,47 @@ function AppContent() {
             </div>
           </SidebarInset>
         </SidebarProvider>
+
+        <Dialog open={showCreateWs} onOpenChange={(open) => { setShowCreateWs(open); if (!open) setNewWsName(""); }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>New Workspace</DialogTitle>
+              <DialogDescription>Create a workspace to group related documents.</DialogDescription>
+            </DialogHeader>
+            <Input
+              placeholder="Workspace name"
+              value={newWsName}
+              onChange={(e) => setNewWsName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newWsName.trim() && !creatingWs) {
+                  setCreatingWs(true);
+                  handleCreateWorkspace(newWsName.trim(), () => {
+                    setShowCreateWs(false);
+                    setNewWsName("");
+                    setCreatingWs(false);
+                  });
+                }
+              }}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setShowCreateWs(false); setNewWsName(""); }}>Cancel</Button>
+              <Button
+                disabled={!newWsName.trim() || creatingWs}
+                onClick={() => {
+                  setCreatingWs(true);
+                  handleCreateWorkspace(newWsName.trim(), () => {
+                    setShowCreateWs(false);
+                    setNewWsName("");
+                    setCreatingWs(false);
+                  });
+                }}
+              >
+                {creatingWs ? "Creating…" : "Create"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </TooltipProvider>
     </ThemeProvider>
   );

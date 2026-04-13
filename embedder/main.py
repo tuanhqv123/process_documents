@@ -2,31 +2,28 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-import mlx.core as mx
 import numpy as np
 from fastapi import FastAPI
-from mlx_embeddings import generate, load
 from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = os.getenv("EMBEDDING_MODEL", "mlx-community/bge-small-en-v1.5-4bit")
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "384"))
+MODEL_NAME = os.getenv("EMBEDDING_MODEL", "dangvantuan/vietnamese-embedding")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 
-_model = None
-_tokenizer = None
+_model: SentenceTransformer | None = None
 
 
 def load_model():
-    global _model, _tokenizer
+    global _model
     if _model is not None:
-        return _model, _tokenizer
-    logger.info(f"Loading MLX embedding model: {MODEL_NAME}")
-    _model, _tokenizer = load(MODEL_NAME)
-    mx.eval(_model.parameters())
+        return _model
+    logger.info(f"Loading model: {MODEL_NAME}")
+    _model = SentenceTransformer(MODEL_NAME)
     logger.info("Model loaded successfully")
-    return _model, _tokenizer
+    return _model
 
 
 @asynccontextmanager
@@ -55,8 +52,6 @@ def health():
 
 @app.post("/embed", response_model=EmbedResponse)
 def embed(req: EmbedRequest):
-    model, tokenizer = load_model()
-    result = generate(model, tokenizer, texts=req.texts)
-    mx.eval(result.text_embeds)
-    embeddings = np.array(result.text_embeds).tolist()
-    return EmbedResponse(embeddings=embeddings)
+    model = load_model()
+    vecs = model.encode(req.texts, normalize_embeddings=True)
+    return EmbedResponse(embeddings=vecs.tolist())

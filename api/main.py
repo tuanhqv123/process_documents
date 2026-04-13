@@ -30,23 +30,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ── WebRTC noise suppression + VAD ────
+# ── WebRTC noise suppression ──────────────────────────────────
 from webrtc_noise_gain import AudioProcessor
-_ns = AudioProcessor(10, 3)   # 10ms frame, noise suppression level 3
-_ns_buf = bytearray()
-_FRAME  = 320                 # 10ms at 16kHz, int16
+
+_NS_FRAME = 320  # 10ms @ 16kHz (320 bytes, int16)
 
 
-def _clean_pcm(raw: bytes) -> bytes:
-    global _ns_buf
-    _ns_buf.extend(raw)
-    out = bytearray()
-    while len(_ns_buf) >= _FRAME:
-        frame = bytes(_ns_buf[:_FRAME])
-        _ns_buf = _ns_buf[_FRAME:]
-        result = _ns.Process10ms(frame)
-        out.extend(result.audio)
-    return bytes(out)
+class AudioPipeline:
+    """Per-connection WebRTC noise suppression."""
+
+    def __init__(self):
+        self._ns  = AudioProcessor(10, 3)
+        self._buf = bytearray()
+
+    def process(self, raw: bytes) -> bytes:
+        """Returns denoised PCM bytes (same length as input, approximately)."""
+        self._buf.extend(raw)
+        out = bytearray()
+        while len(self._buf) >= _NS_FRAME:
+            frame = bytes(self._buf[:_NS_FRAME])
+            self._buf = self._buf[_NS_FRAME:]
+            out.extend(self._ns.Process10ms(frame).audio)
+        return bytes(out)
 
 
 def compute_audio_levels(raw_bytes: bytes) -> tuple[float, float]:
@@ -64,13 +69,14 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_lan_ip() -> str:
-    import socket
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        return "127.0.0.1"
+    """Return the first 192.168.x.x or 10.x.x.x LAN IP, skipping VPN (172.16-31.x)."""
+    import netifaces
+    for iface in netifaces.interfaces():
+        for addr in netifaces.ifaddresses(iface).get(netifaces.AF_INET, []):
+            ip = addr.get("addr", "")
+            if ip.startswith("192.168.") or ip.startswith("10."):
+                return ip
+    return "127.0.0.1"
 
 
 def _start_mdns():
@@ -185,6 +191,7 @@ async def websocket_root(websocket: WebSocket):
     except Exception:
         return
 
+    pipeline = AudioPipeline()
     audio_buffer = bytearray()
     device_id = "esp32-001"
     amp_acc: list[float] = []
@@ -203,14 +210,15 @@ async def websocket_root(websocket: WebSocket):
 
             audio_data = msg["bytes"]
 
-            # 1) Amplitude (cheap math)
+            # 1) WebRTC denoise
+            denoised = pipeline.process(audio_data)
+
+            # 2) Amplitude → SSE chart every 500ms
             amplitude, peak = compute_audio_levels(audio_data)
             amp_acc.append(amplitude)
             peak_acc.append(peak)
-
-            # 2) SSE every ~1s for chart
             now = _time.monotonic()
-            if now - last_sse >= 1.0 and amp_acc:
+            if now - last_sse >= 0.5 and amp_acc:
                 avg_amp = sum(amp_acc) / len(amp_acc)
                 avg_peak = max(peak_acc)
                 amp_acc.clear()
@@ -224,14 +232,13 @@ async def websocket_root(websocket: WebSocket):
                     "time": datetime.now(TZ_VN).isoformat(),
                 })
 
-            # 3) Denoise + forward to browser audio
-            clean = _clean_pcm(audio_data)
-            if _audio_monitor_clients and clean:
-                asyncio.create_task(_broadcast_pcm(clean))
+            # 3) Forward denoised audio to browser monitor
+            if _audio_monitor_clients and denoised:
+                asyncio.create_task(_broadcast_pcm(denoised))
 
-            # 4) Whisper every ~2s (uses raw audio — whisper handles noise itself)
-            audio_buffer.extend(audio_data)
-            if len(audio_buffer) >= 64000:
+            # 4) Buffer denoised audio, transcribe every 1.5s
+            audio_buffer.extend(denoised)
+            if len(audio_buffer) >= 48000:
                 chunk = bytes(audio_buffer)
                 audio_buffer.clear()
                 asyncio.create_task(_transcribe_bg(device_id, chunk))

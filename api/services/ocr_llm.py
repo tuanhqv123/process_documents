@@ -90,9 +90,22 @@ def _get_llm_model_name() -> str:
     return getattr(settings, "LLM_MODEL", "gpt-4o")
 
 
+def _extract_page_text(layout_json: list) -> str:
+    """Extract readable text from non-picture blocks for use as page context."""
+    parts = []
+    for b in layout_json:
+        if b.get("category") in ("Picture", "Figure", "Page-header", "Page-footer"):
+            continue
+        t = (b.get("text") or "").strip()
+        if t:
+            parts.append(t)
+    return "\n".join(parts)
+
+
 def _caption_pictures(layout_json: list, img_b64: str, img_w: int, img_h: int) -> list:
     """Crop each Picture/Figure block and send to the active LLM for captioning.
 
+    Uses surrounding page text as context and responds in the document's language.
     Modifies layout_json in-place: sets block['text'] to the generated caption.
     Returns the (possibly updated) layout_json.
     Silently skips if no LLM is configured or captioning fails.
@@ -114,6 +127,7 @@ def _caption_pictures(layout_json: list, img_b64: str, img_w: int, img_h: int) -
     logger.info("Caption: captioning %d picture block(s) via LLM", len(picture_indices))
 
     llm_model = _get_llm_model_name()
+    page_context = _extract_page_text(layout_json)
 
     try:
         img_bytes = base64.b64decode(img_b64)
@@ -121,6 +135,21 @@ def _caption_pictures(layout_json: list, img_b64: str, img_w: int, img_h: int) -
     except Exception as e:
         logger.warning("Caption: could not decode page image: %s", e)
         return layout_json
+
+    context_block = (
+        f"Page context (use this to understand the document topic and language):\n{page_context}\n\n"
+        if page_context else ""
+    )
+
+    caption_prompt = (
+        f"{context_block}"
+        "Analyze the image above extracted from a document page.\n"
+        "1. Identify the image type (chart, diagram, photo, table, illustration, etc.)\n"
+        "2. Describe the content in detail\n"
+        "3. Explain its meaning in relation to the surrounding document context\n\n"
+        "IMPORTANT: Respond in the same language as the page context text above.\n"
+        "Format:\nType: [image type]\nDescription: [detailed description and meaning]"
+    )
 
     for i in picture_indices:
         block = layout_json[i]
@@ -143,11 +172,11 @@ def _caption_pictures(layout_json: list, img_b64: str, img_w: int, img_h: int) -
                         "role": "user",
                         "content": [
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{crop_b64}"}},
-                            {"type": "text", "text": "Look at the image, identify the kind of it to understand then describe the content and thinking the meaning of the photo to represent, ensuring the relation between them and/or sequential reading can be visualized. Return format Type: , Description: the meaning of the photo to represent. If there are multiple elements, separate them with new lines."},
+                            {"type": "text", "text": caption_prompt},
                         ],
                     },
                 ],
-                max_tokens=256,
+                max_tokens=512,
                 temperature=0.1,
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
