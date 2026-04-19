@@ -141,7 +141,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
         logger.warning(f"Embedding unavailable: {e}")
         return []
 
-    MIN_SCORE = 0.65  # balanced relevance threshold
+    MIN_SCORE = 0.5  # relaxed relevance threshold
 
     rows = db.execute(
         sql_text("""
@@ -160,7 +160,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
               AND LENGTH(n.text) >= 60
               AND (1 - (n.embedding <=> CAST(:qemb AS vector))) >= :min_score
             ORDER BY n.embedding <=> CAST(:qemb AS vector)
-            LIMIT 3
+            LIMIT 1
         """),
         {"qemb": str(q_emb), "ws_id": workspace_id, "min_score": MIN_SCORE},
     ).fetchall()
@@ -230,7 +230,7 @@ def generate_session_summary(session_id: int) -> str:
             end = b.block_end.strftime("%H:%M:%S")
             lines.append(f"[{start} – {end}] User said: \"{b.combined_text}\"")
             rag = json.loads(b.rag_results or "[]")
-            for match in rag[:3]:
+            for match in rag[:1]:
                 lines.append(
                     f"  → \"{match['filename']}\" p.{match['page_num']}: {match['context']}"
                 )
