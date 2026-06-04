@@ -1,13 +1,24 @@
-import type { Chunk, DocImage, Document, Workspace, Formula, OcrPageData, ApiKey, SearchResult, RecordingSession, SessionRagBlock, GraphNode } from "@/types"
+import type { Chunk, DocImage, Document, Workspace, Formula, OcrPageData, ApiKey, SearchResult, RecordingSession, SessionRagBlock, SessionParticipant, User, GraphNode, Device } from "@/types"
 
 const BASE = import.meta.env.VITE_API_URL || ""
 
+function getAuthToken(): string | null {
+  return localStorage.getItem("auth_token")
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken()
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers: { ...headers, ...init?.headers },
   })
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem("auth_token")
+      window.location.href = "/login"
+    }
     const err = await res.text()
     throw new Error(err || `HTTP ${res.status}`)
   }
@@ -20,12 +31,19 @@ export const api = {
   documents: {
     list: () => request<Document[]>("/api/documents"),
     get: (id: number) => request<Document>(`/api/documents/${id}`),
-    upload: (file: File) => {
+    upload: async (file: File) => {
       const form = new FormData()
       form.append("file", file)
-      return fetch(`${BASE}/api/documents/upload`, { method: "POST", body: form }).then(
-        (r) => r.json() as Promise<Document>
-      )
+      const token = getAuthToken()
+      const headers: Record<string, string> = {}
+      if (token) headers["Authorization"] = `Bearer ${token}`
+      const res = await fetch(`${BASE}/api/documents/upload`, {
+        method: "POST",
+        headers,
+        body: form,
+      })
+      if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`)
+      return res.json() as Promise<Document>
     },
     delete: (id: number) => request<{ ok: boolean }>(`/api/documents/${id}`, { method: "DELETE" }),
     chunks: (id: number) => request<Chunk[]>(`/api/documents/${id}/chunks`),
@@ -115,6 +133,20 @@ export const api = {
       ),
   },
 
+  auth: {
+    login: (username: string, password: string) =>
+      request<{ access_token: string; user: { id: number; username: string; created_at: string } }>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      }),
+    register: (username: string, password: string) =>
+      request<{ access_token: string; user: { id: number; username: string; created_at: string } }>("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      }),
+    me: () => request<User>("/api/auth/me"),
+  },
+
   imageUrl: (imagePath: string) => {
     const match = imagePath.match(/data\/images\/(.+)/)
     if (match) return `${BASE}/static/images/${match[1]}`
@@ -144,10 +176,15 @@ export const api = {
     transcribeAudio: async (deviceId: string, file: File) => {
       const form = new FormData()
       form.append("file", file)
+      const token = getAuthToken()
+      const headers: Record<string, string> = {}
+      if (token) headers["Authorization"] = `Bearer ${token}`
       const res = await fetch(`${BASE}/api/realtime/transcribe?device_id=${deviceId}`, {
         method: "POST",
+        headers,
         body: form,
       })
+      if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`)
       return res.json() as Promise<{ text: string }>
     },
   },
@@ -176,5 +213,18 @@ export const api = {
       request<{ id: number; device_id: string; text: string; timestamp: string }[]>(
         `/api/sessions/${id}/transcripts${after ? `?after=${encodeURIComponent(after)}` : ""}`
       ),
+    share: (id: number) =>
+      request<RecordingSession>(`/api/sessions/${id}/share`, { method: "POST" }),
+    join: (code: string) =>
+      request<RecordingSession>("/api/sessions/join", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }),
+    participants: (id: number) =>
+      request<SessionParticipant[]>(`/api/sessions/${id}/participants`),
+  },
+
+  devices: {
+    list: () => request<Device[]>("/api/devices"),
   },
 }

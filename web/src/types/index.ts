@@ -147,4 +147,30 @@ export interface RecordingSession {
   summary: string | null
   block_count: number
   transcript_count: number
+  owner_id: number | null
+  invite_code: string | null
+  my_role: "owner" | "member" | null
+  participant_count: number
+}
+
+export interface User {
+  id: number
+  username: string
+  created_at: string
+}
+
+export interface SessionParticipant {
+  id: number
+  user_id: number
+  username: string
+  role: "owner" | "member"
+  joined_at: string
+}
+
+export interface Device {
+  device_id: string
+  name: string
+  connected_at?: string
+  last_seen?: string
+  ip?: string
 }
