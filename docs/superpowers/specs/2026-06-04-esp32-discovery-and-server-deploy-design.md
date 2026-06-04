@@ -22,13 +22,23 @@ Out of scope for now (deferred): public rooms, assigning a mic to a specific roo
 
 ## Design
 
-### Port allocation on 4090 (within the open 2100–2110 range)
+### Single public port via reverse proxy (within the open 2100–2110 range)
 
-| Port | Service |
-|------|---------|
-| 2109 | STT (existing) |
-| 2108 | Backend API + WebSocket (`/ws`, `/api/*`) — ESP32 + browser connect here |
-| 2107 | Web frontend |
+Only **one** new public port. An nginx reverse proxy is the sole public entrypoint; backend and web run on the internal Docker network (no published host ports). STT stays on its existing port for internal use by the backend only.
+
+| Port | Exposure | Service |
+|------|----------|---------|
+| **2108** | **public** | nginx reverse proxy — the only public app port |
+| 8000 | internal only | Backend API + WebSocket (`/ws`, `/api/*`) |
+| 5173 | internal only | Web frontend (vite) |
+| 2109 | internal use | STT — backend calls it via `host.docker.internal:2109` (not needed publicly) |
+
+nginx path routing on `:2108`:
+- `/api/*` → `backend:8000`
+- `/ws`, `/ws/audio-monitor` → `backend:8000` (with WebSocket `Upgrade` headers)
+- `/` (everything else) → `frontend:5173` (with Upgrade headers for vite HMR)
+
+ESP32 connects to `ws://49.213.89.44:2108/ws`; browsers open `http://49.213.89.44:2108/`.
 
 ### A. Firmware — shared, zero per-device config
 
@@ -55,23 +65,22 @@ This extends the existing `connected_devices` usage rather than replacing it; re
 - Empty state: "No devices online — flash a mic and it'll appear here."
 - No claiming/room assignment yet — just visibility.
 
-### D. Deploy to 4090
+### D. Deploy to 4090 (single public port)
 
-- Reuse `docker-compose.yml`, minus the local `whisper` service (STT is the existing native `:2109` on the same host). Backend env `WHISPER_SERVICE_URL=http://localhost:2109` (host network) or `http://host.docker.internal:2109`.
-- Publish backend on `2108:8000`, web on `2107:5173` (or a built static bundle behind the backend).
+- Reuse `docker-compose.yml`, minus the local `whisper` service (STT is the existing native `:2109` on the same host). Backend env `WHISPER_SERVICE_URL=http://host.docker.internal:2109` (+ `extra_hosts: host.docker.internal:host-gateway`).
+- **Add an `nginx` service** as the only public entrypoint, publishing `2108:80`. Remove published host ports from `backend` and `frontend` — they stay internal on the compose network. nginx routes `/api` + `/ws*` → `backend:8000`, `/` → `frontend:5173` (Upgrade headers on WS paths and HMR).
 - Backend `DATABASE_URL`/`REDIS_URL` point at the compose db/redis services.
-- ESP32 and browsers use `http://49.213.89.44:2107` (web) and `ws://49.213.89.44:2108/ws` (devices).
+- ESP32 → `ws://49.213.89.44:2108/ws`; browsers → `http://49.213.89.44:2108/`.
 - Plain HTTP/WS for MVP; TLS/domain is a later step.
 
 ## Data flow
 
 ```
 ESP32 (any) ──ws://49.213.89.44:2108/ws──┐
-   hello{device_id from MAC}             │
-   PCM frames ─────────────────────────► Backend (4090, :2108) ──► STT localhost:2109
-                                          │  registry: online_devices + device:{id} (Redis, TTL)
-Browser ──GET /api/devices (every 3s)────┘
-   Devices page lists online mics
+   hello{device_id from MAC}             │      ┌─ /api,/ws → backend:8000 ──► STT host:2109
+   PCM frames ───────────────► nginx :2108 ─────┤   registry: online_devices + device:{id}
+Browser ── http://...:2108/ ──────────────┘      └─ /        → frontend:5173      (Redis, TTL)
+   Devices page polls /api/devices (every 3s)
 ```
 
 ## Risks / notes
