@@ -1,19 +1,47 @@
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import {
   Radio, Square, ArrowLeft, Loader2, RefreshCw, Mic,
   FileText, Sparkles, Clock, ChevronDown, ChevronUp,
+  Share2, Copy, Check, Users,
 } from "lucide-react"
 
 import ReactMarkdown from "react-markdown"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/api/client"
-import type { RecordingSession, SessionRagBlock, RagResult } from "@/types"
+import type { RecordingSession, SessionRagBlock, RagResult, SessionParticipant } from "@/types"
 
 interface SessionDetailPageProps {
   session: RecordingSession
   onBack: () => void
   onSessionUpdated: (s: RecordingSession) => void
+}
+
+// ── Speaker labels: map each mic (device_id) → "Person N" by first appearance ──
+const SPEAKER_COLORS = [
+  "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+  "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  "bg-pink-500/15 text-pink-600 dark:text-pink-400",
+  "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
+]
+
+function buildSpeakerMap(deviceIdsInOrder: string[]): Map<string, number> {
+  const m = new Map<string, number>()
+  for (const id of deviceIdsInOrder) {
+    if (id && !m.has(id)) m.set(id, m.size)
+  }
+  return m
+}
+
+function SpeakerBadge({ index }: { index: number }) {
+  const color = SPEAKER_COLORS[index % SPEAKER_COLORS.length]
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium ${color}`}>
+      Person {index + 1}
+    </span>
+  )
 }
 
 export function SessionDetailPage({
@@ -23,16 +51,27 @@ export function SessionDetailPage({
 }: SessionDetailPageProps) {
   const [session, setSession] = useState(initialSession)
   const [blocks, setBlocks] = useState<SessionRagBlock[]>([])
-  const [liveTranscripts, setLiveTranscripts] = useState<{ id: number; text: string; timestamp: string }[]>([])
+  const [liveTranscripts, setLiveTranscripts] = useState<{ id: number; device_id: string; text: string; timestamp: string }[]>([])
   const [selectedResult, setSelectedResult] = useState<RagResult | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [summarizing, setSummarizing] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [participants, setParticipants] = useState<SessionParticipant[]>([])
+  const [showInviteCode, setShowInviteCode] = useState(false)
+  const [copied, setCopied] = useState(false)
   const lastBlockEndRef = useRef<string | undefined>(undefined)
   const lastTranscriptRef = useRef<string | undefined>(undefined)
   const pollRef = useRef<number | null>(null)
   const sessionIdRef = useRef(session.id)
   sessionIdRef.current = session.id
+
+  // device_id → "Person N" by first-appearance order across the whole session
+  const speakerMap = useMemo(() => {
+    const all = [...blocks.flatMap(b => b.transcripts), ...liveTranscripts]
+      .slice()
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    return buildSpeakerMap(all.map(t => t.device_id))
+  }, [blocks, liveTranscripts])
 
   const loadAll = useCallback(async () => {
     const data = await api.sessions.blocks(session.id)
@@ -45,6 +84,13 @@ export function SessionDetailPage({
   }, [session.id])
 
   useEffect(() => { loadAll() }, [loadAll])
+
+  const loadParticipants = useCallback(async () => {
+    try { setParticipants(await api.sessions.participants(session.id)) }
+    catch (e) { console.error("Failed to load participants:", e) }
+  }, [session.id])
+
+  useEffect(() => { loadParticipants() }, [loadParticipants])
 
   // Auto-open summary strip when summary arrives
   useEffect(() => {
@@ -111,19 +157,42 @@ export function SessionDetailPage({
       const updated = await api.sessions.stop(session.id)
       setSession(updated)
       onSessionUpdated(updated)
-      const pollSummary = async () => {
-        const refreshed = await api.sessions.get(session.id)
+      const pollSummary = async (attempt = 0) => {
+        if (attempt > 20) {
+          setSummarizing(false)
+          return
+        }
+        const refreshed = await api.sessions.get(sessionIdRef.current)
         if (refreshed.summary) {
           setSession(refreshed)
           onSessionUpdated(refreshed)
           setSummarizing(false)
         } else {
-          setTimeout(pollSummary, 3000)
+          setTimeout(() => pollSummary(attempt + 1), 3000)
         }
       }
-      setTimeout(pollSummary, 3000)
+      setTimeout(() => pollSummary(0), 3000)
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  const handleShare = async () => {
+    try {
+      const updated = await api.sessions.share(session.id)
+      setSession(updated)
+      onSessionUpdated(updated)
+      setShowInviteCode(true)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to share")
+    }
+  }
+
+  const copyInviteCode = () => {
+    if (session.invite_code) {
+      navigator.clipboard.writeText(session.invite_code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
 
@@ -201,11 +270,26 @@ export function SessionDetailPage({
                       <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
                         {new Date(t.timestamp).toLocaleTimeString()}
                       </span>
+                      <SpeakerBadge index={speakerMap.get(t.device_id) ?? 0} />
                       <span className="text-sm leading-snug">{t.text}</span>
                     </div>
                   ))}
-                </div>
-              </div>
+        </div>
+        {session.my_role === "owner" && (
+          <Button size="sm" variant="outline" onClick={handleShare} className="gap-1.5 shrink-0">
+            <Share2 className="h-3.5 w-3.5" />
+            Share
+          </Button>
+        )}
+        {showInviteCode && session.invite_code && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted text-sm shrink-0">
+            <span className="font-mono tracking-widest">{session.invite_code}</span>
+            <button onClick={copyInviteCode} className="p-0.5 hover:text-foreground">
+              {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        )}
+      </div>
             )}
 
             {blocks.length === 0 && liveTranscripts.length === 0 ? (
@@ -220,12 +304,32 @@ export function SessionDetailPage({
                   <BlockRow
                     key={b.id}
                     block={b}
+                    speakerMap={speakerMap}
                     selectedResultId={selectedResult?.id ?? null}
                     onSelectResult={setSelectedResult}
                   />
                 ))}
               </div>
             )}
+            {participants.length > 0 && (
+              <div className="border-b px-3 py-2">
+                <div className="text-[10px] font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <Users className="h-3 w-3" />
+                  PARTICIPANTS ({participants.length})
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  {participants.map(p => (
+                    <div key={p.id} className="flex items-center gap-1.5 text-xs">
+                      <span className="truncate">{p.username}</span>
+                      {p.role === "owner" && (
+                        <span className="text-[9px] text-muted-foreground">(owner)</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {session.status === "active" && (
               <div className="px-3 py-2 flex items-center gap-1.5 text-[10px] text-green-500">
                 <RefreshCw className="h-3 w-3 animate-spin" /> live
@@ -294,10 +398,12 @@ export function SessionDetailPage({
 
 function BlockRow({
   block,
+  speakerMap,
   selectedResultId,
   onSelectResult,
 }: {
   block: SessionRagBlock
+  speakerMap: Map<string, number>
   selectedResultId: number | null
   onSelectResult: (r: RagResult) => void
 }) {
@@ -321,6 +427,7 @@ function BlockRow({
             <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
               {new Date(t.timestamp).toLocaleTimeString()}
             </span>
+            <SpeakerBadge index={speakerMap.get(t.device_id) ?? 0} />
             <span className="text-sm leading-snug">{t.text}</span>
           </div>
         ))}
