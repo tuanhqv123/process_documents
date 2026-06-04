@@ -20,9 +20,11 @@ from api.routes.documents import router as docs_router, chunks_router, images_ro
 from api.routes.workspaces import router as ws_router
 from api.routes.search import router as search_router
 from api.routes.realtime import router as realtime_router, manager, save_audio_level, save_transcript, whisper_client
+from api.redis_client import get_redis, register_device, touch_device, unregister_device
 from api.routes.extract import router as extract_router
 from api.routes.api_keys import router as api_keys_router
 from api.routes.sessions import router as sessions_router
+from api.routes.auth import router as auth_router
 
 import json
 import logging
@@ -162,6 +164,7 @@ app.include_router(realtime_router)
 app.include_router(extract_router)
 app.include_router(api_keys_router)
 app.include_router(sessions_router)
+app.include_router(auth_router)
 
 
 async def _transcribe_bg(device_id: str, chunk: bytes):
@@ -185,15 +188,11 @@ async def _transcribe_bg(device_id: str, chunk: bytes):
 @app.websocket("/ws")
 async def websocket_root(websocket: WebSocket):
     await websocket.accept()
-    logger.info("ESP32 connected")
-    try:
-        await websocket.send_text("ACK: connected")
-    except Exception:
-        return
+    logger.info("ESP32 connected (waiting for hello)")
 
     pipeline = AudioPipeline()
     audio_buffer = bytearray()
-    device_id = "esp32-001"
+    device_id = None
     amp_acc: list[float] = []
     peak_acc: list[float] = []
     last_sse = _time.monotonic()
@@ -205,15 +204,37 @@ async def websocket_root(websocket: WebSocket):
             if msg.get("type") == "websocket.disconnect":
                 break
 
+            if "text" in msg and "bytes" not in msg and device_id is None:
+                try:
+                    payload = json.loads(msg["text"])
+                    if payload.get("type") == "hello":
+                        device_id = payload.get("device_id", f"esp32-{id(websocket) % 10000:04d}")
+                        name = payload.get("name", device_id)
+                        await websocket.send_text(json.dumps({
+                            "type": "hello_ack",
+                            "device_id": device_id,
+                            "status": "ok",
+                        }))
+                        ip = websocket.client.host if websocket.client else ""
+                        logger.info(f"ESP32 identified: {device_id} ({name}) from {ip}")
+                        register_device(device_id, name, ip)
+                        continue
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
             if "bytes" not in msg:
                 continue
 
+            if device_id is None:
+                device_id = f"esp32-{id(websocket) % 10000:04d}"
+                logger.info(f"ESP32 auto-assigned: {device_id}")
+                ip = websocket.client.host if websocket.client else ""
+                register_device(device_id, device_id, ip)
+
             audio_data = msg["bytes"]
 
-            # 1) WebRTC denoise
             denoised = pipeline.process(audio_data)
 
-            # 2) Amplitude → SSE chart every 500ms
             amplitude, peak = compute_audio_levels(audio_data)
             amp_acc.append(amplitude)
             peak_acc.append(peak)
@@ -225,6 +246,7 @@ async def websocket_root(websocket: WebSocket):
                 peak_acc.clear()
                 last_sse = now
                 save_audio_level(device_id, avg_amp, avg_peak)
+                touch_device(device_id)
                 await manager.publish_sse("audio", {
                     "device_id": device_id,
                     "amplitude": round(avg_amp, 6),
@@ -232,11 +254,9 @@ async def websocket_root(websocket: WebSocket):
                     "time": datetime.now(TZ_VN).isoformat(),
                 })
 
-            # 3) Forward denoised audio to browser monitor
             if _audio_monitor_clients and denoised:
                 asyncio.create_task(_broadcast_pcm(denoised))
 
-            # 4) Buffer denoised audio, transcribe every 1.5s
             audio_buffer.extend(denoised)
             if len(audio_buffer) >= 48000:
                 chunk = bytes(audio_buffer)
@@ -248,7 +268,11 @@ async def websocket_root(websocket: WebSocket):
     except Exception as e:
         logger.info(f"ESP32 WS closed: {type(e).__name__}")
     finally:
-        logger.info("ESP32 disconnected")
+        if device_id:
+            logger.info(f"ESP32 disconnected: {device_id}")
+            unregister_device(device_id)
+        else:
+            logger.info("ESP32 disconnected (never identified)")
 
 
 @app.get("/api/health")
