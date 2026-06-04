@@ -25,6 +25,7 @@ from api.routes.extract import router as extract_router
 from api.routes.api_keys import router as api_keys_router
 from api.routes.sessions import router as sessions_router
 from api.routes.auth import router as auth_router
+from api.routes.devices import router as devices_router
 
 import json
 import logging
@@ -165,6 +166,7 @@ app.include_router(extract_router)
 app.include_router(api_keys_router)
 app.include_router(sessions_router)
 app.include_router(auth_router)
+app.include_router(devices_router)
 
 
 async def _transcribe_bg(device_id: str, chunk: bytes):
