@@ -116,7 +116,7 @@ Mic **INMP441** → ESP32:
 |---------|-------|
 | VDD     | 3V3   |
 | GND     | GND   |
-| L/R     | GND   |
+| L/R     | GND **hoặc** 3V3 (firmware đọc cả 2 kênh, tự dò — nối kiểu nào cũng được) |
 | WS      | GPIO 15 |
 | SCK     | GPIO 14 |
 | SD      | GPIO 32 |

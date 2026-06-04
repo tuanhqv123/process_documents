@@ -98,20 +98,26 @@ void i2sTask(void* param) {
       continue;
     }
     
-    int count = bytes_read / sizeof(int32_t);
-    samplesRead += count;
-    
-    // Convert 32-bit I2S (24-bit left-justified) to 16-bit with gain + clamp
-    // >> 11 gives ~8x gain for quiet INMP441, clamp prevents clipping distortion
-    for (int i = 0; i < count; i++) {
-      int32_t val = raw[i] >> 11;
+    int count  = bytes_read / sizeof(int32_t);   // total int32 samples (L,R interleaved)
+    int frames = count / 2;                        // stereo -> mono output
+    samplesRead += frames;
+
+    // INMP441 drives only ONE channel (left or right, set by its L/R pin). Read both and
+    // pick whichever has signal, so the SAME firmware works regardless of how L/R is wired.
+    // >> 11 gives ~8x gain for the quiet INMP441; clamp prevents clipping distortion.
+    for (int i = 0; i < frames; i++) {
+      int32_t l = raw[2 * i]     >> 11;
+      int32_t r = raw[2 * i + 1] >> 11;
+      int32_t al = l < 0 ? -l : l;
+      int32_t ar = r < 0 ? -r : r;
+      int32_t val = (al >= ar) ? l : r;
       if (val > 32767)  val = 32767;
       if (val < -32768) val = -32768;
       pcm[i] = (int16_t)val;
     }
-    
+
     // Ghi vào stream buffer (non-blocking)
-    size_t bytesToWrite = count * sizeof(int16_t);
+    size_t bytesToWrite = frames * sizeof(int16_t);
     xStreamBufferSend(audioStream, pcm, bytesToWrite, 0);
   }
 }
@@ -213,7 +219,7 @@ void setup() {
     .mode             = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate      = SAMPLE_RATE,
     .bits_per_sample  = I2S_BITS_PER_SAMPLE_32BIT,
-    .channel_format   = I2S_CHANNEL_FMT_ONLY_LEFT,
+    .channel_format   = I2S_CHANNEL_FMT_RIGHT_LEFT,  // read BOTH channels; pick the active one (works for any L/R wiring)
     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count    = 4,
