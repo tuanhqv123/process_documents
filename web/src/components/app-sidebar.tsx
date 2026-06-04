@@ -8,6 +8,8 @@ import {
   Activity,
   Settings,
   Radio,
+  LogOut,
+  Wifi,
 } from "lucide-react";
 import {
   Collapsible,
@@ -29,15 +31,18 @@ import {
 import type { Workspace } from "@/types";
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  activePage: "dataset" | "workspace" | "realtime" | "sessions" | "settings" | null;
+  activePage: "dataset" | "workspace" | "realtime" | "sessions" | "settings" | "devices" | null;
   activeWorkspaceId: number | null;
   workspaces: Workspace[];
   workspacesLoading?: boolean;
+  user?: { username: string } | null;
+  onLogout?: () => void;
   onSelectDataset: () => void;
   onSelectWorkspace: (ws: Workspace) => void;
   onSelectRealtime: () => void;
   onSelectSessions: () => void;
   onSelectSettings: () => void;
+  onSelectDevices: () => void;
   onCreateWorkspace: () => void;
 }
 
@@ -50,7 +55,10 @@ export function AppSidebar({
   onSelectRealtime,
   onSelectSessions,
   onSelectSettings,
+  onSelectDevices,
   onCreateWorkspace,
+  user,
+  onLogout,
   ...props
 }: AppSidebarProps) {
   return (
@@ -104,6 +112,22 @@ export function AppSidebar({
               >
                 <Activity className="size-4" />
                 <span>Real-time Monitor</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
+        {/* Devices */}
+        <SidebarGroup>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={activePage === "devices"}
+                onClick={onSelectDevices}
+                className="cursor-pointer"
+              >
+                <Wifi className="size-4" />
+                <span>Devices</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -192,6 +216,20 @@ export function AppSidebar({
           </SidebarGroup>
         </Collapsible>
       </SidebarContent>
+
+      <SidebarGroup className="mt-auto">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={onLogout}
+              className="cursor-pointer text-muted-foreground hover:text-foreground"
+            >
+              <span className="truncate">{user?.username ?? "User"}</span>
+              <LogOut className="ml-auto h-4 w-4" />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
 
       <SidebarRail />
     </Sidebar>

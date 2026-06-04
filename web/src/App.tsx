@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from "react-router-dom";
 import {
   SidebarInset,
   SidebarProvider,
@@ -27,12 +27,16 @@ import { DocumentView } from "@/pages/document-view";
 import { SettingsPage } from "@/pages/settings-page";
 import { SessionsPage } from "@/pages/sessions-page";
 import { SessionDetailPage } from "@/pages/session-detail-page";
+import { LoginPage } from "@/pages/login-page";
+import { DevicesPage } from "@/pages/devices-page";
+import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { api } from "@/api/client";
 import type { Document, Workspace, RecordingSession } from "@/types";
 
 function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [realtimeKey, setRealtimeKey] = useState(0);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -51,6 +55,7 @@ function AppContent() {
   const isWorkspace = location.pathname === "/workspace" || location.pathname.startsWith("/workspace/");
   const isSettings = location.pathname === "/settings";
   const isSessions = location.pathname === "/sessions" || location.pathname.startsWith("/sessions/")
+  const isDevices = location.pathname === "/devices"
 
   useEffect(() => {
     Promise.all([api.documents.list(), api.workspaces.list()])
@@ -206,6 +211,7 @@ function AppContent() {
               : isDataset ? "dataset"
               : isWorkspace ? "workspace"
               : isSessions ? "sessions"
+              : isDevices ? "devices"
               : null
             }
             activeWorkspaceId={activeWorkspace?.id ?? null}
@@ -214,9 +220,12 @@ function AppContent() {
             onSelectWorkspace={handleSelectWorkspace}
             onSelectRealtime={() => { setRealtimeKey(k => k + 1); navigate("/monitor"); }}
             onSelectSettings={() => navigate("/settings")}
+            onSelectDevices={() => navigate("/devices")}
             onSelectSessions={() => { setSelectedSession(null); navigate("/sessions"); }}
             onCreateWorkspace={() => setShowCreateWs(true)}
             workspacesLoading={loading}
+            user={user}
+            onLogout={logout}
           />
 
           <SidebarInset className="min-h-0 overflow-hidden">
@@ -254,7 +263,11 @@ function AppContent() {
             </header>
 
             <div className="flex flex-1 overflow-hidden">
-              {isSettings ? (
+              {isDevices ? (
+                <div className="flex-1 overflow-y-auto">
+                  <DevicesPage />
+                </div>
+              ) : isSettings ? (
                 <div className="flex-1 overflow-y-auto">
                   <SettingsPage />
                 </div>
@@ -368,20 +381,57 @@ function AppContent() {
   );
 }
 
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+  const location = useLocation()
+
+  if (loading) {
+    return (
+      <ThemeProvider defaultTheme="system" storageKey="kb-theme">
+        <div className="flex items-center justify-center h-screen text-muted-foreground text-sm">
+          Loading…
+        </div>
+      </ThemeProvider>
+    )
+  }
+
+  if (!user && location.pathname !== "/login") {
+    return <Navigate to="/login" replace />
+  }
+
+  if (user && location.pathname === "/login") {
+    return <Navigate to="/" replace />
+  }
+
+  if (!user) {
+    return (
+      <ThemeProvider defaultTheme="system" storageKey="kb-theme">
+        <LoginPage />
+      </ThemeProvider>
+    )
+  }
+
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/dataset" element={<AppContent />} />
-        <Route path="/dataset/:id" element={<AppContent />} />
-        <Route path="/workspace" element={<AppContent />} />
-        <Route path="/workspace/:id" element={<AppContent />} />
-        <Route path="/monitor" element={<AppContent />} />
-        <Route path="/settings" element={<AppContent />} />
-        <Route path="/sessions" element={<AppContent />} />
-        <Route path="/sessions/:id" element={<AppContent />} />
-        <Route path="*" element={<AppContent />} />
-      </Routes>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<ThemeProvider defaultTheme="system" storageKey="kb-theme"><LoginPage /></ThemeProvider>} />
+          <Route path="/dataset" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/dataset/:id" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/workspace" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/workspace/:id" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/monitor" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/settings" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/devices" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/sessions" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="/sessions/:id" element={<AuthGuard><AppContent /></AuthGuard>} />
+          <Route path="*" element={<AuthGuard><AppContent /></AuthGuard>} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }
