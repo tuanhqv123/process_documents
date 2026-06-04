@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = os.getenv("EMBEDDING_MODEL", "dangvantuan/vietnamese-embedding")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+# PhoBERT-based models max out at 256 tokens (max_position_embeddings=258).
+# Cap here so long inputs are truncated instead of crashing with an index error.
+MAX_SEQ_LEN = int(os.getenv("EMBEDDING_MAX_SEQ_LEN", "256"))
 
 _model: SentenceTransformer | None = None
 
@@ -22,7 +25,8 @@ def load_model():
         return _model
     logger.info(f"Loading model: {MODEL_NAME}")
     _model = SentenceTransformer(MODEL_NAME)
-    logger.info("Model loaded successfully")
+    _model.max_seq_length = MAX_SEQ_LEN   # truncate long text → avoid PhoBERT position overflow
+    logger.info(f"Model loaded successfully (max_seq_length={MAX_SEQ_LEN})")
     return _model
 
 
