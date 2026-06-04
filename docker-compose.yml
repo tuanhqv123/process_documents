@@ -36,7 +36,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/pdf_processor
       REDIS_URL: redis://redis:6379
-      EMBEDDING_SERVICE_URL: http://host.docker.internal:8001
+      EMBEDDING_SERVICE_URL: http://embedder:8001
       # Set in .env. Local: remote 4090 STT. On the 4090: http://host.docker.internal:2109
       WHISPER_SERVICE_URL: ${WHISPER_SERVICE_URL:-http://host.docker.internal:2109}
       PYTHONUNBUFFERED: "1"
@@ -59,6 +59,19 @@ services:
     environment:
       VITE_PROXY_TARGET: http://pdf-backend:8000
     command: sh -c "npm install && npx vite --host 0.0.0.0 --port 5173"
+
+  embedder:
+    build:
+      context: .
+      dockerfile: embedder/Dockerfile
+    container_name: pdf-embedder
+    environment:
+      EMBEDDING_MODEL: dangvantuan/vietnamese-embedding
+      EMBEDDING_DIM: "768"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    expose:
+      - "8001"
 
   nginx:
     image: nginx:1.27-alpine
@@ -89,3 +102,4 @@ services:
 volumes:
   postgres_data:
   frontend_node_modules:
+  hf_cache:
