@@ -141,7 +141,7 @@ def _search_workspace(workspace_id: int, query: str, db) -> list[dict]:
         logger.warning(f"Embedding unavailable: {e}")
         return []
 
-    MIN_SCORE = 0.5  # relaxed relevance threshold
+    MIN_SCORE = 0.2  # relaxed relevance threshold (tuned for dangvantuan/vietnamese-embedding + conversational speech)
 
     rows = db.execute(
         sql_text("""
