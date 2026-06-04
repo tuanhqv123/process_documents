@@ -2,6 +2,8 @@
 
 A local-first knowledge base that lets you upload documents (PDF, PPTX), extract structured layout via OCR, build a hierarchical knowledge graph, and run real-time RAG (Retrieval-Augmented Generation) against live voice sessions from an ESP32 microphone.
 
+> **Deploy + connect ESP32 mics end-to-end:** see **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)** — a self-contained, command-by-command runbook (an AI agent can follow it top to bottom to deploy the server, flash a board, and verify a mic). Firmware-only guide: **[`firmware/README.md`](firmware/README.md)**.
+
 ---
 
 ## Architecture
