@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY embedder/main.py .
 
-ENV EMBEDDING_MODEL=dangvantuan/vietnamese-embedding \
+ENV EMBEDDING_MODEL=BAAI/bge-base-en-v1.5 \
     EMBEDDING_DIM=768
 
 EXPOSE 8001

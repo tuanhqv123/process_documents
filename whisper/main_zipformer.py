@@ -19,6 +19,8 @@ NUM_THREADS = int(os.getenv("NUM_THREADS", "4"))
 SAMPLE_RATE = 16000
 # chunk-16 = lowest latency; change to chunk-32 / chunk-64 for better accuracy
 CHUNK       = os.getenv("ZIPFORMER_CHUNK", "16")
+# "cpu" (default, local) or "cuda" (GPU deploy — needs sherpa-onnx +cuda wheel)
+PROVIDER    = os.getenv("ZIPFORMER_PROVIDER", "cpu")
 
 _recognizer = None
 
@@ -27,22 +29,45 @@ def _model_path(name: str) -> str:
     return os.path.join(_MODEL_DIR, name)
 
 
+def _find_model(kind: str) -> str:
+    """Locate encoder/decoder/joiner onnx regardless of exact filename
+    (works across VN/EN sherpa-onnx zipformer releases). Prefer fp16 > fp32 > int8."""
+    import glob
+    candidates = glob.glob(os.path.join(_MODEL_DIR, f"{kind}*.onnx"))
+    if not candidates:
+        raise FileNotFoundError(f"No {kind}*.onnx in {_MODEL_DIR}")
+
+    def rank(p: str) -> int:
+        n = os.path.basename(p)
+        if "fp16" in n:
+            return 0
+        if "int8" in n:
+            return 2
+        return 1
+
+    return sorted(candidates, key=rank)[0]
+
+
 def load_model():
     global _recognizer
     import sherpa_onnx
 
-    encoder = _model_path(f"encoder-epoch-31-avg-11-chunk-{CHUNK}-left-128.fp16.onnx")
-    decoder = _model_path(f"decoder-epoch-31-avg-11-chunk-{CHUNK}-left-128.fp16.onnx")
-    joiner  = _model_path(f"joiner-epoch-31-avg-11-chunk-{CHUNK}-left-128.fp16.onnx")
+    encoder = _find_model("encoder")
+    decoder = _find_model("decoder")
+    joiner  = _find_model("joiner")
     tokens  = _model_path("tokens.txt")
+    if not os.path.exists(tokens):
+        raise FileNotFoundError(f"tokens.txt not found in {_MODEL_DIR}")
 
-    for f in (encoder, decoder, joiner, tokens):
-        if not os.path.exists(f):
-            raise FileNotFoundError(f"Model file not found: {f}")
+    bpe = _model_path("bpe.model")
+    has_bpe = os.path.exists(bpe)
 
-    logger.info(f"Loading Zipformer RNNT streaming (chunk={CHUNK}) from {_MODEL_DIR}")
+    logger.info(
+        f"Loading Zipformer (provider={PROVIDER}) enc={os.path.basename(encoder)} "
+        f"bpe={'yes' if has_bpe else 'no'} from {_MODEL_DIR}"
+    )
 
-    _recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+    kwargs = dict(
         encoder         = encoder,
         decoder         = decoder,
         joiner          = joiner,
@@ -51,12 +76,16 @@ def load_model():
         sample_rate     = SAMPLE_RATE,
         feature_dim     = 80,
         decoding_method = "greedy_search",
-        # BPE with ▁ space prefix — sherpa handles SentencePiece post-processing
-        modeling_unit   = "bpe",
-        bpe_vocab       = _model_path("bpe.model"),
+        provider        = PROVIDER,
         enable_endpoint_detection = False,
         debug           = False,
     )
+    if has_bpe:
+        # BPE with ▁ space prefix — sherpa handles SentencePiece post-processing
+        kwargs["modeling_unit"] = "bpe"
+        kwargs["bpe_vocab"] = bpe
+
+    _recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(**kwargs)
     logger.info("Zipformer RNNT loaded OK")
 
 
@@ -96,6 +125,7 @@ def health():
         "status"  : "ok" if _recognizer is not None else "loading",
         "model"   : f"hynt/Zipformer-30M-RNNT-Streaming-6000h (chunk={CHUNK})",
         "backend" : "sherpa-onnx",
+        "provider": PROVIDER,
         "threads" : NUM_THREADS,
     }
 

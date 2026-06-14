@@ -66,8 +66,9 @@ services:
       dockerfile: embedder/Dockerfile
     container_name: pdf-embedder
     environment:
-      EMBEDDING_MODEL: dangvantuan/vietnamese-embedding
+      EMBEDDING_MODEL: BAAI/bge-base-en-v1.5
       EMBEDDING_DIM: "768"
+      EMBEDDING_MAX_SEQ_LEN: "512"
     volumes:
       - hf_cache:/root/.cache/huggingface
     expose:
