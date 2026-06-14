@@ -123,7 +123,7 @@ def transcribe(audio: np.ndarray) -> str:
 def health():
     return {
         "status"  : "ok" if _recognizer is not None else "loading",
-        "model"   : f"hynt/Zipformer-30M-RNNT-Streaming-6000h (chunk={CHUNK})",
+        "model"   : os.getenv("ZIPFORMER_MODEL_NAME", "streaming-zipformer"),
         "backend" : "sherpa-onnx",
         "provider": PROVIDER,
         "threads" : NUM_THREADS,
