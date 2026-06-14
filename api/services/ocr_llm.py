@@ -296,7 +296,7 @@ def _ocr_page_vllm(img_b64: str) -> dict:
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
                     {"type": "text", "text": OCR_LAYOUT_PROMPT},
                 ]}],
-                max_completion_tokens=32768,
+                max_completion_tokens=8192,  # leave room for image+prompt input within the 32768 ctx
                 temperature=0.1,
             )
             raw = resp.choices[0].message.content or ""
